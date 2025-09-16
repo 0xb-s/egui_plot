@@ -28,7 +28,7 @@ use emath::Float as _;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
-        Arrows, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, HLine, Line, LineStyle,
+        Arrows, Band, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, HLine, Line, LineStyle,
         MarkerShape, Orientation, PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase,
         PlotPoint, PlotPoints, Points, Polygon, Text, VLine,
     },
