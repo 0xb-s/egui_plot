@@ -256,4 +256,11 @@ impl<'a> PlotUi<'a> {
         }
         self.items.push(Box::new(chart));
     }
+    /// TODO: add docs here
+    pub fn band(&mut self, mut band: crate::Band) {
+        if band.color() == Color32::TRANSPARENT {
+            band = band.with_color(self.auto_color());
+        }
+        self.items.push(Box::new(band));
+    }
 }
