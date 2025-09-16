@@ -16,12 +16,14 @@ use rect_elem::{RectElement, highlighted_color};
 
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
 
+pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
 pub use values::{
     ClosestElem, LineStyle, MarkerShape, Orientation, PlotGeometry, PlotPoint, PlotPoints,
 };
 
+mod band;
 mod bar;
 mod box_elem;
 mod rect_elem;
