@@ -256,7 +256,14 @@ impl<'a> PlotUi<'a> {
         }
         self.items.push(Box::new(chart));
     }
-    /// TODO: add docs here
+
+    /// Add a shaded [`Band`] to the plot.
+    ///
+    /// A band fills the area between a lower and an upper curve (`y_min(x)` and `y_max(x)`).
+    /// This is commonly used to visualize confidence intervals, error margins, or variance
+    /// around a central time series.
+    ///
+    /// If no color is set, one will be chosen automatically.
     pub fn band(&mut self, mut band: crate::Band) {
         if band.color() == Color32::TRANSPARENT {
             band = band.with_color(self.auto_color());
