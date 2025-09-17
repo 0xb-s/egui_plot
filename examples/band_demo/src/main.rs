@@ -11,7 +11,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-
 struct VarianceDemoApp {
     xs: Vec<f64>,
     mean: Vec<f64>,
@@ -47,37 +46,31 @@ impl VarianceDemoApp {
     }
 }
 
-
 impl App for VarianceDemoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Variance band demo ");
             ui.label("Shaded area shows uncertainty (y_min..y_max); white line is the mean.");
 
-            Plot::new("variance_band_plot")
-                .show(ui, |plot_ui| {
-                    let band = Band::new("± variance")
-                        .with_color(Color32::from_rgb(64, 160, 255)) 
-                        .with_alpha(80) 
-                        .with_series(&self.xs, &self.y_min, &self.y_max);
-                    plot_ui.band(band);
+            Plot::new("variance_band_plot").show(ui, |plot_ui| {
+                let band = Band::new()
+                    .with_color(Color32::from_rgb(64, 160, 255))
+                    .with_series(&self.xs, &self.y_min, &self.y_max);
+                plot_ui.band(band);
 
-    
-                    let center_series: Vec<[f64; 2]> = self
-                        .xs
-                        .iter()
-                        .zip(self.mean.iter())
-                        .map(|(&x, &y)| [x, y])
-                        .collect();
+                let center_series: Vec<[f64; 2]> = self
+                    .xs
+                    .iter()
+                    .zip(self.mean.iter())
+                    .map(|(&x, &y)| [x, y])
+                    .collect();
 
-                    plot_ui.line(
-                        Line::new("mean", center_series)
-                            .color(Color32::WHITE)
-                            .width(2.0),
-                    );
-                });
+                plot_ui.line(
+                    Line::new("mean", center_series)
+                        .color(Color32::WHITE)
+                        .width(2.0),
+                );
+            });
         });
     }
 }
-
-
