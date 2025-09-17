@@ -10,9 +10,8 @@
 //! let y_min: Vec<f64> = y.iter().map(|&v| v - var).collect();
 //! let y_max: Vec<f64> = y.iter().map(|&v| v + var).collect();
 //!
-//! let band = Band::new("variance")
+//! let band = Band::new()
 //!     .with_color(Color32::from_rgb(64, 160, 255)) // optional;
-//!     .with_alpha(96)                               // 0..=255
 //!     .with_series(&x, &y_min, &y_max);
 //!
 //! plot_ui.band(band);
@@ -25,9 +24,6 @@ use egui::{Color32, Mesh, Shape, Ui};
 use super::{PlotGeometry, PlotItem, PlotItemBase, PlotPoint};
 use crate::{PlotBounds, PlotTransform};
 
-/// Default alpha used for the fill color (0..=255).
-const DEFAULT_ALPHA: u8 = 96;
-
 /// A shaded area between two curves  ``y_min(x) `` and  ``y_max(x) ``.
 #[derive(Clone, Debug)]
 pub struct Band {
@@ -37,9 +33,6 @@ pub struct Band {
     /// Base color for the fill
     color: Color32,
 
-    /// Alpha channel for the fill, 0..=255.
-    alpha: u8,
-
     /// Sampled x-coordinates.
     xs: Vec<f64>,
     /// Lower envelope `` y_min(x) ``.
@@ -47,21 +40,34 @@ pub struct Band {
     /// Upper envelope  ``y_max(x) ``.
     y_max: Vec<f64>,
 }
-
-impl Band {
-    /// Create an empty band with a legend/display `name`.
-    ///
-    /// Use [`Self::with_series`] to provide data and optionally [`Self::with_color`]
-    /// / [`Self::with_alpha`] to style it.
-    pub fn new(name: &str) -> Self {
+impl Default for Band {
+    fn default() -> Self {
+        let default = Color32::from_rgba_unmultiplied(64, 160, 255, 96);
         Self {
-            base: PlotItemBase::new(name.into()),
-            color: Color32::TRANSPARENT,
-            alpha: DEFAULT_ALPHA,
+            base: PlotItemBase::new(String::new()),
+            color: default,
             xs: Vec::new(),
             y_min: Vec::new(),
             y_max: Vec::new(),
         }
+    }
+}
+
+impl Band {
+    /// Create an empty band
+    ///
+    /// Use [`Self::with_series`] to provide data and optionally [`Self::with_color`]
+    ///  [`Self::with_alpha`] to style it.
+    /// If you want it in the legend, call [`Self::with_name`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a named band
+    pub fn with_name(name: impl Into<String>) -> Self {
+        let mut s = Self::new();
+        s.base.name = name.into();
+        s
     }
 
     /// Override the item's stable id.
@@ -75,13 +81,6 @@ impl Band {
     #[inline]
     pub fn with_color(mut self, color: Color32) -> Self {
         self.color = color;
-        self
-    }
-
-    /// Set the alpha component (0..=255) for the band fill.
-    #[inline]
-    pub fn with_alpha(mut self, alpha: u8) -> Self {
-        self.alpha = alpha;
         self
     }
 
@@ -100,9 +99,14 @@ impl Band {
             "Band: xs and y_max must have the same length"
         );
 
+        let n = xs.len();
         self.xs.clear();
         self.y_min.clear();
         self.y_max.clear();
+
+        self.xs.reserve_exact(n);
+        self.y_min.reserve_exact(n);
+        self.y_max.reserve_exact(n);
 
         self.xs.extend_from_slice(xs);
         self.y_min.extend_from_slice(y_min);
@@ -149,13 +153,16 @@ impl Band {
 
     /// Build a filled triangle mesh for the band in screen space.
     fn build_mesh(&self, transform: &PlotTransform) -> Mesh {
+        let n = self.xs.len();
+        let n_segs = n.saturating_sub(1);
+
         let mut mesh = Mesh::default();
 
-      
-        let base = self.color;
-        let fill = Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), self.alpha);
+        mesh.vertices.reserve_exact(n_segs * 4);
+        mesh.indices.reserve_exact(n_segs * 6);
 
-       
+        let fill = self.color;
+
         for i in 0..self.xs.len().saturating_sub(1) {
             let x0 = self.xs[i];
             let x1 = self.xs[i + 1];
@@ -164,7 +171,6 @@ impl Band {
             let yu0 = self.y_max[i];
             let yu1 = self.y_max[i + 1];
 
-        
             if !(x0.is_finite()
                 && x1.is_finite()
                 && yl0.is_finite()
@@ -175,23 +181,19 @@ impl Band {
                 continue;
             }
 
-         
             let (a0, b0) = if yl0 <= yu0 { (yl0, yu0) } else { (yu0, yl0) };
             let (a1, b1) = if yl1 <= yu1 { (yl1, yu1) } else { (yu1, yl1) };
 
-       
             let p_ll = PlotPoint::new(x0, a0);
             let p_lr = PlotPoint::new(x1, a1);
             let p_ur = PlotPoint::new(x1, b1);
             let p_ul = PlotPoint::new(x0, b0);
 
-    
             let ll = transform.position_from_point(&p_ll);
             let lr = transform.position_from_point(&p_lr);
             let ur = transform.position_from_point(&p_ur);
             let ul = transform.position_from_point(&p_ul);
 
-          
             let i0 = mesh.vertices.len() as u32;
             mesh.colored_vertex(ll, fill);
             let i1 = mesh.vertices.len() as u32;
