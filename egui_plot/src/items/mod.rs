@@ -19,6 +19,7 @@ use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
 pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
+pub(crate) use tooltip::{ToolTipAnchor, draw_tooltip_anchors, rulers_and_tooltip_for_anchors};
 pub use values::{
     ClosestElem, LineStyle, MarkerShape, Orientation, PlotGeometry, PlotPoint, PlotPoints,
 };
@@ -28,6 +29,7 @@ mod bar;
 mod box_elem;
 mod rect_elem;
 mod values;
+mod tooltip;
 
 const DEFAULT_FILL_ALPHA: f32 = 0.05;
 
