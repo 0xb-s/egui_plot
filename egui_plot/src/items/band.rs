@@ -19,10 +19,13 @@
 
 use std::ops::RangeInclusive;
 
-use egui::{Color32, Mesh, Shape, Ui};
+use egui::{Color32, Mesh, Pos2, Shape, Ui};
 
 use super::{PlotGeometry, PlotItem, PlotItemBase, PlotPoint};
-use crate::{PlotBounds, PlotTransform};
+use crate::{
+    ClosestElem, Cursor, LabelFormatter, PlotBounds, PlotConfig, PlotTransform,
+    items::{ToolTipAnchor, draw_tooltip_anchors, rulers_and_tooltip_for_anchors},
+};
 
 /// A shaded area between two curves  ``y_min(x) `` and  ``y_max(x) ``.
 #[derive(Clone, Debug)]
@@ -222,7 +225,8 @@ impl PlotItem for Band {
         }
     }
 
-    fn initialize(&mut self, _x_range: RangeInclusive<f64>) {}
+    fn initialize(&mut self, _x_range: RangeInclusive<f64>) {
+    }
 
     fn color(&self) -> Color32 {
         self.color
@@ -242,5 +246,95 @@ impl PlotItem for Band {
 
     fn base_mut(&mut self) -> &mut PlotItemBase {
         &mut self.base
+    }
+    fn find_closest(&self, point: Pos2, transform: &PlotTransform) -> Option<ClosestElem> {
+        let n = self.xs.len();
+        if n == 0 {
+            return None;
+        }
+
+        let mut best: Option<ClosestElem> = None;
+        for i in 0..n {
+            let x = self.xs[i];
+            let ylo = self.y_min[i];
+            let yhi = self.y_max[i];
+            if !(x.is_finite() && ylo.is_finite() && yhi.is_finite()) {
+                continue;
+            }
+
+            // use band center as representative hover location
+            let mid = 0.5 * (ylo + yhi);
+            let pos = transform.position_from_point(&PlotPoint::new(x, mid));
+            let d = point.distance_sq(pos);
+
+            match &mut best {
+                Some(b) if d < b.dist_sq => {
+                    b.index = i;
+                    b.dist_sq = d;
+                }
+                None => {
+                    best = Some(ClosestElem {
+                        index: i,
+                        dist_sq: d,
+                    });
+                }
+                _ => {}
+            }
+        }
+        best
+    }
+
+    fn on_hover(
+        &self,
+        plot_area_response: &egui::Response,
+        elem: ClosestElem,
+        shapes: &mut Vec<Shape>,
+        cursors: &mut Vec<Cursor>,
+        plot: &PlotConfig<'_>,
+        _label_formatter: &LabelFormatter<'_>,
+    ) {
+        let i = elem.index.min(self.xs.len().saturating_sub(1));
+        let x = self.xs[i];
+        let ylo = self.y_min[i];
+        let yhi = self.y_max[i];
+        if !(x.is_finite() && ylo.is_finite() && yhi.is_finite()) {
+            return;
+        }
+        let ymid = 0.5 * (ylo + yhi);
+
+        // Anchor styling
+        let base = if self.color == Color32::TRANSPARENT {
+            Color32::from_rgb(100, 149, 237)
+        } else {
+            self.color
+        };
+        let c_lo = base.linear_multiply(0.8);
+        let c_hi = base.linear_multiply(0.8);
+        let c_mid = Color32::WHITE;
+        let r = if self.base.highlight { 4.0 } else { 3.0 };
+
+        let anchors = [
+            ToolTipAnchor {
+                value: PlotPoint::new(x, ylo),
+                color: c_lo,
+                radius: r,
+            },
+            ToolTipAnchor {
+                value: PlotPoint::new(x, ymid),
+                color: c_mid,
+                radius: r,
+            },
+            ToolTipAnchor {
+                value: PlotPoint::new(x, yhi),
+                color: c_hi,
+                radius: r,
+            },
+        ];
+
+        // Draw anchor markers
+        draw_tooltip_anchors(shapes, plot.transform, &anchors, plot.ui);
+
+        // Rulers + custom tooltip UI
+        rulers_and_tooltip_for_anchors(plot_area_response, self.name(), &anchors, plot, cursors);
     }
 }
