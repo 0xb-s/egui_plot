@@ -28,8 +28,8 @@ use emath::Float as _;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
-        Arrows, Band, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, HLine, Line, LineStyle,
-        MarkerShape, Orientation, PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase,
+        Arrows, Band, BandTooltipOptions, Bar, PinnedRow, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, HLine, Line, LineStyle,
+        MarkerShape, HitRow, Orientation, PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase,
         PlotPoint, PlotPoints, Points, Polygon, Text, VLine,
     },
     legend::{ColorConflictHandling, Corner, Legend},
