@@ -15,7 +15,9 @@ use emath::Float as _;
 use rect_elem::{RectElement, highlighted_color};
 
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
-
+pub use crate::items::tooltip_band::BandTooltipOptions;
+pub use crate::items::tooltip_band::HitRow;
+pub use crate::items::tooltip_band::PinnedRow;
 pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
@@ -28,6 +30,7 @@ mod bar;
 mod box_elem;
 mod rect_elem;
 mod values;
+mod tooltip_band;
 
 const DEFAULT_FILL_ALPHA: f32 = 0.05;
 
