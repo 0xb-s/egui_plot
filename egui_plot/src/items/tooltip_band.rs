@@ -398,7 +398,7 @@ fn draw_pins_overlay(
             rail,
         );
 
-        let label = format!("📌{}", k + 1);
+        let label = format!("{}", k + 1);
         let tx = x.clamp(frame.left() + 12.0, frame.right() - 12.0);
         painter.text(
             Pos2::new(tx, frame.top() + 4.0),
