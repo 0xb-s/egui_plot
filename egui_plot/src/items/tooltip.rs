@@ -1,18 +1,17 @@
 //! Multi-series tooltip & pinning overlays.
 //!
-//! This module implements a *vertical-band* hover/tooltip for `egui_plot`:
-//! for every frame, it creates a thin vertical strip (in pixels) centered on
-//! the mouse X, then for **each series** with point geometry picks the point
-//! whose **screen-x** is closest to the mouse inside that band. The set of
-//! selected points is shown in a tooltip and highlighted on-canvas. Users can
-//! also **pin** the current selection with `P`, and later **unpin** with `U`
-//! or **clear all** with `Delete`.
+//! This module implements a tooltip for `egui_plot` time series.
+//!
+//! Given a mouse position, we find the closest x-points of each series,
+//! and if they are closer than some radius, we display the tooltip.
+//! Additionally, these points can be "pinned" to inspect and compare
+//! their values across pins, without the need to move the mouse back-and-forth.
 //!
 //! The pin snapshots store plot-space values (x,y) and the pinned plot-x,
 //! so they remain correct across zoom/pan and are redrawn each frame.
 //!
 //! # Quick start
-//! ```ignore
+//! ```rs
 //! Plot::new("my_plot").show(ui, |plot_ui| {
 //!     // Default tooltip (simple table UI):
 //!     plot_ui.show_band_tooltip_across_series(12.0); // 12 px half-width band
@@ -20,7 +19,7 @@
 //! ```
 //!
 //! # Custom UI
-//! ```ignore
+//! ```rs
 //! Plot::new("my_plot").show(ui, |plot_ui| {
 //!     let opts = BandTooltipOptions::default()
 //!         .highlight_hovered_lines(true)
@@ -38,7 +37,7 @@
 //! ## Notes
 //! - Pins are stored in **egui temp memory**.
 //!   They are **not persisted** across application restarts.
-//! - Series highlighting currently matches by **series name**. Prefer unique,
+//! - Series highlighting currently matches by **series name**. Prefer unique names.
 
 use egui::{
     self, Align2, Area, Color32, Frame, Grid, Id, Key, Order, Pos2, Rect, RichText, Stroke,
@@ -56,7 +55,7 @@ use crate::{PlotPoint, PlotUi, items::PlotGeometry};
 /// - its **screen position** (for drawing),
 /// - and `screen_dx` = horizontal pixel distance to the pointer (for sorting).
 #[derive(Clone, Debug)]
-pub struct HitRow {
+pub struct HitPoint {
     /// Series display name (should be unique/stable; used for highlight matching).
     pub series_name: String,
     /// Marker color used when drawing the on-canvas anchor.
@@ -75,9 +74,9 @@ pub struct HitRow {
 /// in egui *temp* memory and redrawn every frame (rails + markers). Press **`U`**
 /// to remove the last pin, or **`Delete`** to clear all..
 #[derive(Clone, Debug, Default)]
-pub struct PinnedRow {
+pub struct PinnedPoints {
     /// Cloned hits from the moment the pin was taken (plot-space values).
-    pub hits: Vec<HitRow>,
+    pub hits: Vec<HitPoint>,
     /// The pinned plot-space X used to draw the vertical "pin rail".
     pub plot_x: f64,
 }
@@ -86,7 +85,7 @@ pub struct PinnedRow {
 ///
 /// Use [`BandTooltipOptions::default()`] and adjust via builder-ish methods.
 #[derive(Clone)]
-pub struct BandTooltipOptions {
+pub struct TooltipOptions {
     /// Fill the vertical band region for visual feedback.
     pub draw_band_fill: bool,
     /// Draw a 1D guide line at the current pointer X.
@@ -102,7 +101,7 @@ pub struct BandTooltipOptions {
     /// Show a small panel listing the current pins at the top-right.
     pub show_pins_panel: bool,
 }
-impl Default for BandTooltipOptions {
+impl Default for TooltipOptions {
     fn default() -> Self {
         Self {
             draw_band_fill: true,
@@ -116,7 +115,7 @@ impl Default for BandTooltipOptions {
     }
 }
 
-impl BandTooltipOptions {
+impl TooltipOptions {
     /// Toggle whether hovered series should be visually emphasized for this frame.
     #[inline]
     pub fn highlight_hovered_lines(mut self, on: bool) -> Self {
@@ -143,15 +142,15 @@ fn pins_mem_id(base: Id) -> Id {
 ///
 /// Returns `Vec::new()` if nothing is stored. Pins are not persisted
 /// across app restarts.
-fn load_pins(ctx: &egui::Context, base: Id) -> Vec<PinnedRow> {
-    ctx.data(|d| d.get_temp::<Vec<PinnedRow>>(pins_mem_id(base)))
+fn load_pins(ctx: &egui::Context, base: Id) -> Vec<PinnedPoints> {
+    ctx.data(|d| d.get_temp::<Vec<PinnedPoints>>(pins_mem_id(base)))
         .unwrap_or_default()
 }
 
 /// Save (replace) the pin list for this plot in **egui temp memory**.
 ///
 /// This overwrites the previously stored list for the same plot.
-fn save_pins(ctx: &egui::Context, base: Id, v: Vec<PinnedRow>) {
+fn save_pins(ctx: &egui::Context, base: Id, v: Vec<PinnedPoints>) {
     ctx.data_mut(|d| d.insert_temp(pins_mem_id(base), v));
 }
 
@@ -167,7 +166,7 @@ impl PlotUi<'_> {
     pub fn show_band_tooltip_across_series(&mut self, radius_px: f32) {
         self.show_band_tooltip_across_series_with(
             radius_px,
-            &BandTooltipOptions::default(),
+            &TooltipOptions::default(),
             default_tooltip_ui,
         );
     }
@@ -186,8 +185,8 @@ impl PlotUi<'_> {
     pub fn show_band_tooltip_across_series_with(
         &mut self,
         radius_px: f32,
-        options: &BandTooltipOptions,
-        ui_builder: impl FnOnce(&mut egui::Ui, &[HitRow], &[PinnedRow]),
+        options: &TooltipOptions,
+        ui_builder: impl FnOnce(&mut egui::Ui, &[HitPoint], &[PinnedPoints]),
     ) {
         let ctx = self.ctx().clone();
         let visuals = ctx.style().visuals.clone();
@@ -218,7 +217,7 @@ impl PlotUi<'_> {
             return;
         }
 
-        let mut hits: Vec<HitRow> = Vec::new();
+        let mut hits: Vec<HitPoint> = Vec::new();
 
         for item in &self.items {
             if !item.allow_hover() {
@@ -259,7 +258,7 @@ impl PlotUi<'_> {
                     PlotGeometry::Points(points) => points[ix],
                     _ => continue,
                 };
-                hits.push(HitRow {
+                hits.push(HitPoint {
                     series_name: item.name().to_owned(),
                     color: base_color,
                     value,
@@ -305,7 +304,7 @@ impl PlotUi<'_> {
             ctx.input(|i| {
                 if i.key_pressed(Key::P) {
                     let pointer_plot = transform.value_from_position(pointer_screen);
-                    pins.push(PinnedRow {
+                    pins.push(PinnedPoints {
                         hits: hits.clone(),
                         plot_x: pointer_plot.x,
                     });
@@ -371,7 +370,7 @@ impl PlotUi<'_> {
 /// Pins are stored in plot-space; this function transforms them back to screen
 fn draw_pins_overlay(
     ctx: &egui::Context,
-    pins: &[PinnedRow],
+    pins: &[PinnedPoints],
     transform: crate::PlotTransform,
     frame: Rect,
     visuals: &egui::style::Visuals,
@@ -422,7 +421,7 @@ fn draw_pins_overlay(
 /// This is a *display-only* panel (not interactive), listing all pins and
 /// their captured series rows. It helps the user review pinned values without
 /// having to hover the plot again.
-fn show_pins_panel(ctx: &egui::Context, frame: Rect, pins: &[PinnedRow]) {
+fn show_pins_panel(ctx: &egui::Context, frame: Rect, pins: &[PinnedPoints]) {
     let panel_id = Id::new("egui_plot_pins_panel");
     let panel_pos = Pos2::new(frame.right() - 240.0, frame.top() + 8.0);
 
@@ -478,7 +477,7 @@ fn show_pins_panel(ctx: &egui::Context, frame: Rect, pins: &[PinnedRow]) {
 }
 
 /// Default tooltip content: a compact table with a row per hit (series).
-fn default_tooltip_ui(ui: &mut egui::Ui, hits: &[HitRow], pins: &[PinnedRow]) {
+fn default_tooltip_ui(ui: &mut egui::Ui, hits: &[HitPoint], pins: &[PinnedPoints]) {
     ui.strong("Nearest per series (band)");
     ui.add_space(4.0);
 
