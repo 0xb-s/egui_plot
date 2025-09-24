@@ -79,8 +79,8 @@ impl App for Demo {
 
 
                 #[allow(clippy::excessive_nesting)]
-                plot_ui.show_band_tooltip_across_series_with(
-                    12.0,
+                plot_ui.show_tooltip_across_series_with(
+
                     &TooltipOptions::default(),
                     |ui, _hits: &[HitPoint], pins: &[PinnedPoints]| {
                         ui.strong("Pinned snapshots");
