@@ -1,7 +1,7 @@
 use eframe::egui;
 use eframe::{App, Frame};
 use egui::{Color32, Context};
-use egui_plot::{Line, Plot};
+use egui_plot::{Line, Plot, TooltipOptions};
 fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Band tooltip across series",
@@ -43,7 +43,7 @@ impl App for Demo {
                 plot_ui.line(Line::new("f1", s1).color(Color32::from_rgb(120, 220, 120)).width(2.0));
                 plot_ui.line(Line::new("f2", s2).color(Color32::from_rgb(120, 160, 255)).width(2.0));
 
-    plot_ui.show_band_tooltip_across_series(12.0);
+    plot_ui.show_tooltip_with_options(&TooltipOptions::default());
 
       });
         });
