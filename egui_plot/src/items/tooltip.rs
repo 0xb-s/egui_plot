@@ -14,7 +14,7 @@
 //! ```rs
 //! Plot::new("my_plot").show(ui, |plot_ui| {
 //!     // Default tooltip (simple table UI):
-//!     plot_ui.show_band_tooltip_across_series(12.0); // 12 px half-width band
+//!        plot_ui.show_tooltip_across_series_with(&TooltipOptions::default());
 //! });
 //! ```
 //!
@@ -24,7 +24,7 @@
 //!     let opts = BandTooltipOptions::default()
 //!         .highlight_hovered_lines(true)
 //!         .show_pins_panel(true);
-//!     plot_ui.show_band_tooltip_across_series_with(10.0, &opts, |ui, hits, pins| {
+//!     plot_ui.show_tooltip_across_series_with( &opts, |ui, hits, pins| {
 //!         ui.strong("My custom tooltip");
 //!         for h in hits {
 //!             ui.label(format!("{}: x={:.3}, y={:.3}", h.series_name, h.value.x, h.value.y));
@@ -64,7 +64,8 @@ pub struct HitPoint {
     pub value: PlotPoint,
     /// Screen-space position where the marker is drawn.
     pub screen_pos: Pos2,
-    /// Horizontal pixel distance from pointer.x to this hit (smaller is closer).
+    /// Horizontal distance in pixels from (current frame's) `pointer.x`.
+    /// Used  for sorting.
     pub screen_dx: f32, // |screen_x - pointer_x|
 }
 
@@ -94,12 +95,15 @@ pub struct TooltipOptions {
     pub band_fill: Color32,
     /// Stroke for the vertical guide line.
     pub guide_stroke: Stroke,
-    /// Radius for the on-canvas hit markers (in pixels).
+    /// Radius of the on-canvas hit markers (in pixels).
     pub marker_radius: f32,
     /// Highlight hovered lines this frame (matched by series name).
     pub highlight_hovered_lines: bool,
     /// Show a small panel listing the current pins at the top-right.
     pub show_pins_panel: bool,
+
+    /// Half-width of the vertical selection, in screen pixels.
+    pub radius_px: f32,
 }
 impl Default for TooltipOptions {
     fn default() -> Self {
@@ -111,6 +115,7 @@ impl Default for TooltipOptions {
             marker_radius: 3.5,
             highlight_hovered_lines: true,
             show_pins_panel: true,
+            radius_px: 50.0,
         }
     }
 }
@@ -155,25 +160,12 @@ fn save_pins(ctx: &egui::Context, base: Id, v: Vec<PinnedPoints>) {
 }
 
 impl PlotUi<'_> {
-    /// Show a vertical-band tooltip using default options and a built-in table UI.
-    ///
-    /// - `radius_px`: half-width of the selection band in **pixels**.
-    ///
-    /// Hotkeys while the plot is hovered:
-    /// - `P`: pin current selection (adds a rail and markers),
-    /// - `U`: unpin last,
-    /// - `Delete`: clear all pins.
-    pub fn show_band_tooltip_across_series(&mut self, radius_px: f32) {
-        self.show_band_tooltip_across_series_with(
-            radius_px,
-            &TooltipOptions::default(),
-            default_tooltip_ui,
-        );
+    /// Default UI with custom options
+    pub fn show_tooltip_with_options(&mut self, options: &TooltipOptions) {
+        self.show_tooltip_across_series_with(options, default_tooltip_ui);
     }
-
     /// Provide options and a closure to build the **tooltip body UI**.
     ///
-    /// - `radius_px`: half-width of the selection band in **pixels**.
     /// - `options`: visual behavior knobs (band fill, markers, guide, etc).
     /// - `ui_builder`: called each frame to render the tooltip contents.
     ///   Receives:
@@ -182,9 +174,9 @@ impl PlotUi<'_> {
     ///
     /// The overlay (band, markers, rails) and highlighting are handled by this
     /// function; the closure only draws the *tooltip* content (table, custom UI).
-    pub fn show_band_tooltip_across_series_with(
+    pub fn show_tooltip_across_series_with(
         &mut self,
-        radius_px: f32,
+
         options: &TooltipOptions,
         ui_builder: impl FnOnce(&mut egui::Ui, &[HitPoint], &[PinnedPoints]),
     ) {
@@ -211,8 +203,9 @@ impl PlotUi<'_> {
             return;
         };
 
-        let band_min_x = (pointer_screen.x - radius_px).max(frame.left());
-        let band_max_x = (pointer_screen.x + radius_px).min(frame.right());
+        let r = options.radius_px;
+        let band_min_x = (pointer_screen.x - r).max(frame.left());
+        let band_max_x = (pointer_screen.x + r).min(frame.right());
         if band_max_x <= band_min_x {
             return;
         }
