@@ -257,7 +257,7 @@ impl<'a> PlotUi<'a> {
         self.items.push(Box::new(chart));
     }
 
-    /// Add a shaded [`Band`]((crate::Band) to the plot.
+    /// Add a shaded [`Band`](`crate::Band`) to the plot.
     ///
     /// A band fills the area between a lower and an upper curve (`y_min(x)` and `y_max(x)`).
     /// This is commonly used to visualize confidence intervals, error margins, or variance
