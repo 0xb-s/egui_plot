@@ -84,7 +84,7 @@ pub struct PinnedPoints {
 
 /// Visual/behavioral settings for the band tooltip.
 ///
-/// Use [`BandTooltipOptions::default()`] and adjust via builder-ish methods.
+/// Use [`TooltipOptions::default()`] and adjust via builder-ish methods.
 #[derive(Clone)]
 pub struct TooltipOptions {
     /// Fill the vertical band region for visual feedback.
