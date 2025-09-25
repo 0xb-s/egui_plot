@@ -938,7 +938,7 @@ impl<'a> Plot<'a> {
             last_auto_bounds: mem.auto_bounds,
             response,
             bounds_modifications: Vec::new(),
-            called_once: AHashSet::new(),
+            called_once: false,
         };
         let inner = build_fn(&mut plot_ui);
         let PlotUi {
