@@ -18,14 +18,16 @@ pub struct PlotUi<'a> {
     pub(crate) response: Response,
     pub(crate) bounds_modifications: Vec<BoundsModification>,
 
-    pub(crate) called_once: ahash::AHashSet<&'static str>,
+    pub(crate) called_once: bool,
 }
 
 impl<'a> PlotUi<'a> {
     #[inline]
-    /// Returns true the first time `tag` is seen in this `PlotUi`
-    pub(crate) fn ensure_once(&mut self, tag: &'static str) -> bool {
-        self.called_once.insert(tag)
+    ///  returns true if this is the first call
+    pub(crate) fn ensure_once(&mut self) -> bool {
+        let first = !self.called_once;
+        self.called_once = true;
+        first
     }
     fn auto_color(&mut self) -> Color32 {
         let i = self.next_auto_color_idx;
