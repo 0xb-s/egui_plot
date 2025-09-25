@@ -188,9 +188,7 @@ impl PlotUi<'_> {
             first_time,
             "show_tooltip_across_series_with(..) must be called at most once per plot per plot"
         );
-        if !first_time {
-            return;
-        }
+
         let ctx = self.ctx().clone();
         let visuals = ctx.style().visuals.clone();
         let transform = *self.transform();
