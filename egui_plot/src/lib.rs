@@ -9,7 +9,6 @@
 //!
 
 mod axis;
-mod export;
 mod items;
 mod legend;
 mod memory;
