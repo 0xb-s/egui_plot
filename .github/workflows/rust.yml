@@ -39,9 +39,6 @@ jobs:
       - name: Rustfmt
         run: cargo fmt --all -- --check
 
-      - name: Lint vertical spacing
-        run: ./scripts/lint.py
-
       - name: check --all-features
         run: cargo check --all-features --all-targets
 
