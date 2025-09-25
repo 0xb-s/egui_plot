@@ -1880,7 +1880,7 @@ impl PreparedPlot<'_> {
 
         (cursors, hovered_plot_item_id)
     }
-
+}
 /// Returns next bigger power in given base
 /// e.g.
 /// ```ignore
