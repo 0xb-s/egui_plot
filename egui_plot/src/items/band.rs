@@ -3,21 +3,21 @@
 //! visualize variance around a time series.
 //!
 //! # Example :
-//! ```no_run
-///! use egui_plot::Band;
-///! use egui::Color32;
-//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
-//! let y: Vec<f64> = x.iter().map(|&t| t.sin()).collect();
-//! let var: f64 = 0.2;
-//! let y_min: Vec<f64> = y.iter().map(|&v| v - var).collect();
-//! let y_max: Vec<f64> = y.iter().map(|&v| v + var).collect();
-//!
-//! let band = Band::new()
-//!     .with_color(Color32::from_rgb(64, 160, 255)) // optional;
-//!     .with_series(&x, &y_min, &y_max);
-//!
-//! plot_ui.band(band);
-//! ```
+// ```no_run
+// use egui_plot::Band;
+// use egui::Color32;
+// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+// let y: Vec<f64> = x.iter().map(|&t| t.sin()).collect();
+// let var: f64 = 0.2;
+// let y_min: Vec<f64> = y.iter().map(|&v| v - var).collect();
+// let y_max: Vec<f64> = y.iter().map(|&v| v + var).collect();
+//
+// let band = Band::new()
+//     .with_color(Color32::from_rgb(64, 160, 255)) // optional;
+//     .with_series(&x, &y_min, &y_max);
+//
+// plot_ui.band(band);
+// ```
 
 use std::ops::RangeInclusive;
 
