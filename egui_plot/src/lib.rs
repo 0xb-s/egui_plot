@@ -1804,7 +1804,7 @@ impl PreparedPlot<'_> {
         }
     }
 
-     fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
+    fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
         let Self {
             plot_area_response,
             transform,
