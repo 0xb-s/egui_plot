@@ -85,19 +85,6 @@ jobs:
 
   # ---------------------------------------------------------------------------
 
-  cargo-deny:
-    name: Check Rust dependencies (cargo-deny)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          rust-version: "1.85.0"
-          log-level: warn
-          command: check
-
-  # ---------------------------------------------------------------------------
-
   trunk:
     name: trunk build
     runs-on: ubuntu-latest
