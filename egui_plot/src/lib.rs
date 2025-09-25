@@ -17,7 +17,7 @@ mod transform;
 
 use std::{cmp::Ordering, ops::RangeInclusive, sync::Arc};
 
-use ahash::{AHashSet, HashMap};
+use ahash::HashMap;
 use egui::{
     Align2, Color32, CursorIcon, Id, Layout, NumExt as _, PointerButton, Pos2, Rangef, Rect,
     Response, Sense, Shape, Stroke, TextStyle, Ui, Vec2, Vec2b, WidgetText, epaint, remap_clamp,
