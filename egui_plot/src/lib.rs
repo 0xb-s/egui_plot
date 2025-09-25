@@ -1804,7 +1804,7 @@ impl PreparedPlot<'_> {
         }
     }
 
-fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
+ fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
         let Self {
             plot_area_response,
             transform,
@@ -1815,6 +1815,8 @@ fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>
             ..
         } = self;
 
+        // If there is no label formatter, we disable egui_plot's default tooltip completely.
+        // We still return cursors so the crosshair lines are drawn later.
         if label_formatter.is_none() {
             let mut cursors = Vec::new();
             let v = transform.value_from_position(pointer);
@@ -1856,16 +1858,19 @@ fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>
         let mut cursors = Vec::new();
 
         let hovered_plot_item_id = if let Some((item, elem)) = closest {
+            // With a formatter present, keep the original behavior: tooltip + rulers for that item.
             item.on_hover(
                 plot_area_response,
                 elem,
                 shapes,
                 &mut cursors,
                 &plot,
-                label_formatter,
+                label_formatter, // Some(_)
             );
             Some(item.id())
         } else {
+            // No item close enough: show rulers + tooltip at pointer value (original behavior).
+            // Since we are in the Some(formatter) branch, tooltip will be shown.
             let value = transform.value_from_position(pointer);
             items::rulers_and_tooltip_at_value(
                 plot_area_response,
@@ -1873,10 +1878,13 @@ fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>
                 "",
                 &plot,
                 &mut cursors,
-                label_formatter, 
+                label_formatter, // Some(_)
             );
             None
         };
+
+        (cursors, hovered_plot_item_id)
+    }
 
 
 /// Returns next bigger power in given base
