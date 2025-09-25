@@ -59,7 +59,6 @@ impl Band {
     /// Create an empty band
     ///
     /// Use [`Self::with_series`] to provide data and optionally [`Self::with_color`]
-    ///  [`Self::with_alpha`] to style it.
     /// If you want it in the legend, call [`Self::with_name`].
     pub fn new() -> Self {
         Self::default()
@@ -79,7 +78,7 @@ impl Band {
         self
     }
 
-    /// Set the base RGB color of the band (alpha is taken from [`Self::with_alpha`]).
+    /// Set the base RGB color of the band.
     #[inline]
     pub fn with_color(mut self, color: Color32) -> Self {
         self.color = color;
