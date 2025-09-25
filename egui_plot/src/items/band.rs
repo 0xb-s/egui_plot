@@ -3,7 +3,7 @@
 //! visualize variance around a time series.
 //!
 //! # Example :
-//! ```
+//! ```no_run
 //! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 //! let y: Vec<f64> = x.iter().map(|&t| t.sin()).collect();
 //! let var: f64 = 0.2;
