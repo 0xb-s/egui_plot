@@ -1,3 +1,4 @@
+#![allow(rustdoc::missing_crate_level_docs)]
 use std::f64::consts::PI;
 
 use eframe::egui::{self, RichText};
