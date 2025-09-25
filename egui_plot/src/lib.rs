@@ -1804,7 +1804,7 @@ impl PreparedPlot<'_> {
         }
     }
 
-    fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
+fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
         let Self {
             plot_area_response,
             transform,
@@ -1862,7 +1862,7 @@ impl PreparedPlot<'_> {
                 shapes,
                 &mut cursors,
                 &plot,
-                label_formatter, 
+                label_formatter,
             );
             Some(item.id())
         } else {
@@ -1878,8 +1878,6 @@ impl PreparedPlot<'_> {
             None
         };
 
-        (cursors, hovered_plot_item_id)
-    }
 
 /// Returns next bigger power in given base
 /// e.g.
