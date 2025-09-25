@@ -1804,7 +1804,7 @@ impl PreparedPlot<'_> {
         }
     }
 
-    fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
+     fn hover(&self, ui: &Ui, pointer: Pos2, shapes: &mut Vec<Shape>) -> (Vec<Cursor>, Option<Id>) {
         let Self {
             plot_area_response,
             transform,
@@ -1814,6 +1814,18 @@ impl PreparedPlot<'_> {
             items,
             ..
         } = self;
+
+        if label_formatter.is_none() {
+            let mut cursors = Vec::new();
+            let v = transform.value_from_position(pointer);
+            if *show_x {
+                cursors.push(Cursor::Vertical { x: v.x });
+            }
+            if *show_y {
+                cursors.push(Cursor::Horizontal { y: v.y });
+            }
+            return (cursors, None);
+        }
 
         if !show_x && !show_y {
             return (Vec::new(), None);
@@ -1827,7 +1839,6 @@ impl PreparedPlot<'_> {
             .filter_map(|item| {
                 let item = &**item;
                 let closest = item.find_closest(pointer, transform);
-
                 Some(item).zip(closest)
             });
 
@@ -1851,7 +1862,7 @@ impl PreparedPlot<'_> {
                 shapes,
                 &mut cursors,
                 &plot,
-                label_formatter,
+                label_formatter, 
             );
             Some(item.id())
         } else {
@@ -1862,14 +1873,13 @@ impl PreparedPlot<'_> {
                 "",
                 &plot,
                 &mut cursors,
-                label_formatter,
+                label_formatter, 
             );
             None
         };
 
         (cursors, hovered_plot_item_id)
     }
-}
 
 /// Returns next bigger power in given base
 /// e.g.
