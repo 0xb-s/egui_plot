@@ -1,3 +1,4 @@
+#![allow(rustdoc::missing_crate_level_docs)]
 use eframe::egui;
 use eframe::{App, Frame};
 use egui::{Color32, Context};
