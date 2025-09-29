@@ -21,6 +21,7 @@ pub use crate::items::tooltip::TooltipOptions;
 pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
+pub use columnar_series::ColumnarSeries;
 pub use values::{
     ClosestElem, LineStyle, MarkerShape, Orientation, PlotGeometry, PlotPoint, PlotPoints,
 };
@@ -28,6 +29,7 @@ pub use values::{
 mod band;
 mod bar;
 mod box_elem;
+mod columnar_series;
 mod rect_elem;
 mod tooltip;
 mod values;
@@ -156,6 +158,20 @@ pub trait PlotItem {
             PlotGeometry::Rects => {
                 panic!("If the PlotItem is made of rects, it should implement find_closest()")
             }
+            PlotGeometry::PointsXY { xs, ys } => {
+                let n = xs.len().min(ys.len());
+                (0..n)
+                    .map(|index| {
+                        let value = PlotPoint {
+                            x: xs[index],
+                            y: ys[index],
+                        };
+                        let pos = transform.position_from_point(&value);
+                        let dist_sq = point.distance_sq(pos);
+                        ClosestElem { index, dist_sq }
+                    })
+                    .min_by_key(|e| e.dist_sq.ord())
+            }
         }
     }
 
@@ -172,6 +188,13 @@ pub trait PlotItem {
             PlotGeometry::Points(points) => points,
             PlotGeometry::None => {
                 panic!("If the PlotItem has no geometry, on_hover() must not be called")
+            }
+            PlotGeometry::PointsXY { xs, ys } => {
+                let x = xs[elem.index];
+                let y = ys[elem.index];
+                let value = PlotPoint { x, y };
+
+                &[value]
             }
             PlotGeometry::Rects => {
                 panic!("If the PlotItem is made of rects, it should implement on_hover()")
@@ -401,7 +424,9 @@ impl PlotItem for VLine {
 /// A series of values forming a path.
 pub struct Line<'a> {
     base: PlotItemBase,
-    pub(super) series: PlotPoints<'a>,
+    pub(super) columnar: Option<ColumnarSeries<'a>>,
+    pub(super) series: Option<PlotPoints<'a>>,
+
     pub(super) stroke: Stroke,
     pub(super) fill: Option<f32>,
     pub(super) fill_alpha: f32,
@@ -409,13 +434,34 @@ pub struct Line<'a> {
     pub(super) gradient_fill: bool,
     pub(super) style: LineStyle,
 }
+impl<'a> Line<'a> {
+    #[inline]
+    pub fn new_xy(name: impl Into<String>, xs: &'a [f64], ys: &'a [f64]) -> Self {
+        Self::from_series(name, ColumnarSeries::new(xs, ys))
+    }
+    #[inline]
+    pub fn from_series(name: impl Into<String>, series: ColumnarSeries<'a>) -> Self {
+        Self {
+            base: PlotItemBase::new(name.into()),
+            columnar: Some(series),
+            series: None,
+            stroke: Stroke::new(1.5, Color32::TRANSPARENT),
+            fill: None,
+            fill_alpha: DEFAULT_FILL_ALPHA,
+            gradient_color: None,
+            gradient_fill: false,
+            style: LineStyle::Solid,
+        }
+    }
+}
 
 impl<'a> Line<'a> {
     pub fn new(name: impl Into<String>, series: impl Into<PlotPoints<'a>>) -> Self {
         Self {
             base: PlotItemBase::new(name.into()),
-            series: series.into(),
-            stroke: Stroke::new(1.5, Color32::TRANSPARENT), // Note: a stroke of 1.0 (or less) can look bad on low-dpi-screens
+            columnar: None,
+            series: Some(series.into()),
+            stroke: Stroke::new(1.5, Color32::TRANSPARENT),
             fill: None,
             fill_alpha: DEFAULT_FILL_ALPHA,
             gradient_color: None,
@@ -497,6 +543,7 @@ impl PlotItem for Line<'_> {
     fn shapes(&self, _ui: &Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
         let Self {
             base,
+            columnar,
             series,
             stroke,
             fill,
@@ -504,6 +551,7 @@ impl PlotItem for Line<'_> {
             style,
             ..
         } = self;
+
         let mut fill = *fill;
 
         let mut final_stroke: PathStroke = (*stroke).into();
@@ -518,11 +566,24 @@ impl PlotItem for Line<'_> {
             final_stroke = PathStroke::new_uv(stroke.width, wrapped_callback.clone());
         }
 
-        let values_tf: Vec<_> = series
-            .points()
-            .iter()
-            .map(|v| transform.position_from_point(v))
-            .collect();
+        let mut values_tf: Vec<Pos2> = Vec::new();
+        if let Some(cs) = columnar {
+            let n = cs.len();
+            values_tf.reserve(n);
+            for i in 0..n {
+                let value = PlotPoint {
+                    x: cs.xs()[i],
+                    y: cs.ys()[i],
+                };
+                values_tf.push(transform.position_from_point(&value));
+            }
+        } else if let Some(series) = series {
+            values_tf = series
+                .points()
+                .iter()
+                .map(|v| transform.position_from_point(v))
+                .collect();
+        }
         let n_values = values_tf.len();
 
         // Fill the area between the line and a reference line, if required.
@@ -537,20 +598,20 @@ impl PlotItem for Line<'_> {
             let y = transform
                 .position_from_point(&PlotPoint::new(0.0, y_reference))
                 .y;
-            let mut fill_color = Rgba::from(stroke.color)
+            let mut fill_color: Color32 = Rgba::from(stroke.color)
                 .to_opaque()
                 .multiply(fill_alpha)
                 .into();
             let mut mesh = Mesh::default();
             let expected_intersections = 20;
-            mesh.reserve_triangles((n_values - 1) * 2);
+            mesh.reserve_triangles(n_values.saturating_sub(1) * 2);
             mesh.reserve_vertices(n_values * 2 + expected_intersections);
             values_tf.windows(2).for_each(|w| {
                 if *gradient_fill && self.gradient_color.is_some() {
                     fill_color = Rgba::from(self
                         .gradient_color
                         .clone()
-                        .expect("Could not find gradient color callback")(
+                        .expect("missing gradient color callback")(
                         transform.value_from_position(w[1]),
                     ))
                     .to_opaque()
@@ -570,16 +631,20 @@ impl PlotItem for Line<'_> {
                     mesh.add_triangle(i + 1, i + 2, i + 3);
                 }
             });
-            let last = values_tf[n_values - 1];
-            mesh.colored_vertex(last, fill_color);
-            mesh.colored_vertex(pos2(last.x, y), fill_color);
+            if let Some(&last) = values_tf.last() {
+                mesh.colored_vertex(last, fill_color);
+                mesh.colored_vertex(pos2(last.x, y), fill_color);
+            }
             shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
         }
+
         style.style_line(values_tf, final_stroke, base.highlight, shapes);
     }
 
     fn initialize(&mut self, x_range: RangeInclusive<f64>) {
-        self.series.generate_points(x_range);
+        if let Some(series) = &mut self.series {
+            series.generate_points(x_range);
+        }
     }
 
     fn color(&self) -> Color32 {
@@ -595,11 +660,26 @@ impl PlotItem for Line<'_> {
     }
 
     fn geometry(&self) -> PlotGeometry<'_> {
-        PlotGeometry::Points(self.series.points())
+        if let Some(cs) = &self.columnar {
+            PlotGeometry::PointsXY {
+                xs: cs.xs(),
+                ys: cs.ys(),
+            }
+        } else if let Some(series) = &self.series {
+            PlotGeometry::Points(series.points())
+        } else {
+            PlotGeometry::None
+        }
     }
 
     fn bounds(&self) -> PlotBounds {
-        self.series.bounds()
+        if let Some(cs) = &self.columnar {
+            cs.bounds()
+        } else if let Some(series) = &self.series {
+            series.bounds()
+        } else {
+            PlotBounds::NOTHING
+        }
     }
 }
 

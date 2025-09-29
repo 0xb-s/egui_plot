@@ -46,7 +46,6 @@ use egui::{
 
 use crate::{PlotPoint, PlotUi, items::PlotGeometry};
 
-
 /// One selected  anchor per series, found inside the vertical band.
 ///
 /// Built once per frame for all participating series. Each row stores:
@@ -177,7 +176,6 @@ impl PlotUi<'_> {
     /// function; the closure only draws the *tooltip* content (table, custom UI).
     pub fn show_tooltip_across_series_with(
         &mut self,
-
         options: &TooltipOptions,
         ui_builder: impl FnOnce(&mut egui::Ui, &[HitPoint], &[PinnedPoints]),
     ) {
@@ -192,6 +190,7 @@ impl PlotUi<'_> {
         let transform = *self.transform();
         let frame = transform.frame();
 
+        // Draw existing pins (rails + markers) on a foreground layer:
         let mut pins = load_pins(&ctx, self.response.id);
         draw_pins_overlay(
             &ctx,
@@ -206,10 +205,12 @@ impl PlotUi<'_> {
             show_pins_panel(&ctx, *frame, &pins);
         }
 
+        // Need a pointer to build the band/selection:
         let Some(pointer_screen) = ctx.input(|i| i.pointer.latest_pos()) else {
             return;
         };
 
+        // Compute vertical band in screen-space:
         let r = options.radius_px;
         let band_min_x = (pointer_screen.x - r).max(frame.left());
         let band_max_x = (pointer_screen.x + r).min(frame.right());
@@ -217,6 +218,7 @@ impl PlotUi<'_> {
             return;
         }
 
+        // Collect per-series closest point inside the band:
         let mut hits: Vec<HitPoint> = Vec::new();
 
         for item in &self.items {
@@ -250,12 +252,35 @@ impl PlotUi<'_> {
                         }
                     }
                 }
+                PlotGeometry::PointsXY { xs, ys } => {
+                    let n = xs.len().min(ys.len());
+                    for ix in 0..n {
+                        let value = PlotPoint {
+                            x: xs[ix],
+                            y: ys[ix],
+                        };
+                        let p = transform.position_from_point(&value);
+                        if p.x < band_min_x || p.x > band_max_x {
+                            continue;
+                        }
+                        let dx = (p.x - pointer_screen.x).abs();
+                        if dx < best_dx {
+                            best_ix = Some(ix);
+                            best_dx = dx;
+                            best_pos = p;
+                        }
+                    }
+                }
                 PlotGeometry::Rects | PlotGeometry::None => {}
             }
 
             if let Some(ix) = best_ix {
                 let value = match item.geometry() {
                     PlotGeometry::Points(points) => points[ix],
+                    PlotGeometry::PointsXY { xs, ys } => PlotPoint {
+                        x: xs[ix],
+                        y: ys[ix],
+                    },
                     _ => continue,
                 };
                 hits.push(HitPoint {

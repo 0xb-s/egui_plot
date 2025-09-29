@@ -7,7 +7,7 @@
 //! ## Feature flags
 #![cfg_attr(feature = "document-features", doc = document_features::document_features!())]
 //!
-
+#![allow(deprecated)]
 mod axis;
 mod items;
 mod legend;
@@ -1874,7 +1874,7 @@ impl PreparedPlot<'_> {
                 "",
                 &plot,
                 &mut cursors,
-                label_formatter, 
+                label_formatter,
             );
             None
         };

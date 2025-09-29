@@ -3,7 +3,7 @@
 //! Each push to `main` re-deploys the demo.
 
 #![warn(clippy::all, rust_2018_idioms)]
-
+#![allow(deprecated)]
 mod app;
 mod plot_demo;
 

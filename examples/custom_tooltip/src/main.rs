@@ -1,4 +1,6 @@
 #![allow(rustdoc::missing_crate_level_docs)]
+#![allow(deprecated)]
+
 use std::f64::consts::PI;
 
 use eframe::egui::{self, RichText};

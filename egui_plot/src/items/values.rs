@@ -12,6 +12,9 @@ use crate::transform::PlotBounds;
 ///
 /// Uses f64 for improved accuracy to enable plotting
 /// large values (e.g. unix time on x axis).
+#[deprecated(
+    note = "OlotPoint is deprecated. Ue ColumnarSeries<'a> and Line::from_series / Line::new_xy."
+)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotPoint {
     /// This is often something monotonically increasing, such as time, but doesn't have to be.
@@ -175,6 +178,7 @@ pub enum PlotPoints<'a> {
     Owned(Vec<PlotPoint>),
     Generator(ExplicitGenerator<'a>),
     Borrowed(&'a [PlotPoint]),
+    ColumnsBorrowed { xs: &'a [f64], ys: &'a [f64] },
 }
 
 impl Default for PlotPoints<'_> {
@@ -217,7 +221,7 @@ impl<'a> PlotPoints<'a> {
     pub fn points(&self) -> &[PlotPoint] {
         match self {
             Self::Owned(points) => points.as_slice(),
-            Self::Generator(_) => &[],
+            Self::Generator(_) | Self::ColumnsBorrowed { .. } => &[],
             Self::Borrowed(points) => points,
         }
     }
@@ -296,7 +300,8 @@ impl<'a> PlotPoints<'a> {
     pub(crate) fn is_empty(&self) -> bool {
         match self {
             Self::Owned(points) => points.is_empty(),
-            Self::Generator(_) => false,
+            Self::Generator(_) | Self::ColumnsBorrowed { .. } => false,
+
             Self::Borrowed(points) => points.is_empty(),
         }
     }
@@ -347,6 +352,21 @@ impl<'a> PlotPoints<'a> {
                     bounds.extend_with(point);
                 }
                 bounds
+            }
+            Self::ColumnsBorrowed { xs, ys } => {
+                let mut b = PlotBounds::NOTHING;
+                let n = xs.len().min(ys.len());
+                for i in 0..n {
+                    let x = xs[i];
+                    let y = ys[i];
+                    if x.is_finite() {
+                        b.extend_with_x(x);
+                    }
+                    if y.is_finite() {
+                        b.extend_with_y(y);
+                    }
+                }
+                b
             }
         }
     }
@@ -403,6 +423,11 @@ pub enum PlotGeometry<'a> {
     // Has currently no data, as it would require copying rects or iterating a list of pointers.
     // Instead, geometry-based functions are directly implemented in the respective PlotItem impl.
     Rects,
+
+    PointsXY {
+        xs: &'a [f64],
+        ys: &'a [f64],
+    },
 }
 
 // ----------------------------------------------------------------------------

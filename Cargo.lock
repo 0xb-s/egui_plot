@@ -508,6 +508,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "band_demo"
+version = "0.33.0"
+dependencies = [
+ "eframe",
+ "egui_plot",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -728,6 +736,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "columnar"
+version = "0.33.0"
+dependencies = [
+ "eframe",
+ "egui_plot",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -849,6 +865,22 @@ dependencies = [
  "eframe",
  "egui_plot",
  "env_logger",
+]
+
+[[package]]
+name = "custom_tooltip"
+version = "0.33.0"
+dependencies = [
+ "eframe",
+ "egui_plot",
+]
+
+[[package]]
+name = "default_tooltip"
+version = "0.33.0"
+dependencies = [
+ "eframe",
+ "egui_plot",
 ]
 
 [[package]]

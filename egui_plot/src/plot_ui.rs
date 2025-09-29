@@ -156,14 +156,10 @@ impl<'a> PlotUi<'a> {
 
     /// Add a data line.
     pub fn line(&mut self, mut line: crate::Line<'a>) {
-        if line.series.is_empty() {
-            return;
-        };
-
-        // Give the stroke an automatic color if no color has been assigned.
         if line.stroke.color == Color32::TRANSPARENT {
             line.stroke.color = self.auto_color();
         }
+
         self.items.push(Box::new(line));
     }
 
