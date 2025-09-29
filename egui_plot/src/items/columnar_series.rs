@@ -1,3 +1,4 @@
+#![allow(rustdoc::missing_crate_level_docs)]
 use core::fmt;
 use core::ops::{Bound, RangeBounds};
 
