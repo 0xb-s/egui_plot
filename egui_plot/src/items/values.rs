@@ -13,7 +13,7 @@ use crate::transform::PlotBounds;
 /// Uses f64 for improved accuracy to enable plotting
 /// large values (e.g. unix time on x axis).
 #[deprecated(
-    note = "OlotPoint is deprecated. Ue ColumnarSeries<'a> and Line::from_series / Line::new_xy."
+    note = "PlotPoint is deprecated. Use ColumnarSeries<'a> and Line::from_series / Line::new_xy."
 )]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotPoint {
