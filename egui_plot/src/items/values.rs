@@ -80,6 +80,69 @@ impl LineStyle {
         Self::Dotted { spacing: 5.0 }
     }
 
+    pub(super) fn style_line_iter<I>(
+        &self,
+        positions: I,
+        mut stroke: PathStroke,
+        highlight: bool,
+        shapes: &mut Vec<Shape>,
+        scratch: &mut Vec<Pos2>,
+    ) where
+        I: Iterator<Item = Pos2>,
+    {
+        scratch.clear();
+        scratch.extend(positions);
+
+        let path_stroke_color = match &stroke.color {
+            ColorMode::Solid(c) => *c,
+            ColorMode::UV(cb) => cb(Rect::from_min_max(pos2(0., 0.), pos2(0., 0.)), pos2(0., 0.)),
+        };
+
+        match scratch.len() {
+            0 => {}
+            1 => {
+                let mut radius = stroke.width / 2.0;
+                if highlight {
+                    radius *= 2f32.sqrt();
+                }
+                shapes.push(Shape::circle_filled(scratch[0], radius, path_stroke_color));
+            }
+            _ => match self {
+                Self::Solid => {
+                    if highlight {
+                        stroke.width *= 2.0;
+                    }
+                    let buf = std::mem::take(scratch);
+                    shapes.push(Shape::line(buf, stroke));
+                }
+                Self::Dotted { spacing } => {
+                    let mut radius = stroke.width;
+                    if highlight {
+                        radius *= 2f32.sqrt();
+                    }
+                    shapes.extend(Shape::dotted_line(
+                        scratch,
+                        path_stroke_color,
+                        *spacing,
+                        radius,
+                    ));
+                }
+                Self::Dashed { length } => {
+                    if highlight {
+                        stroke.width *= 2.0;
+                    }
+                    let golden = (5.0_f32.sqrt() - 1.0) / 2.0;
+                    shapes.extend(Shape::dashed_line(
+                        scratch,
+                        Stroke::new(stroke.width, path_stroke_color),
+                        *length,
+                        length * golden,
+                    ));
+                }
+            },
+        }
+    }
+
     pub(super) fn style_line(
         &self,
         line: Vec<Pos2>,
