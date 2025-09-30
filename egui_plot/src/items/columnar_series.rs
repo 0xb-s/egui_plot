@@ -82,8 +82,8 @@ impl<'a> ColumnarSeries<'a> {
 
     /// Return an iterator over `(x, y)` pairs (by value).
     #[inline]
-    pub fn iter(&self) -> Iter<'a> {
-        Iter {
+    pub fn iter(&self) -> ColumnarSeriesIter<'a> {
+        ColumnarSeriesIter {
             xs: self.xs,
             ys: self.ys,
             i: 0,
@@ -148,13 +148,13 @@ impl<'a> ColumnarSeries<'a> {
 }
 
 /// Iterator over `(x, y)` pairs in a [`ColumnarSeries`].
-pub struct Iter<'a> {
+pub struct ColumnarSeriesIter<'a> {
     xs: &'a [f64],
     ys: &'a [f64],
     i: usize,
 }
 
-impl Iterator for Iter<'_> {
+impl Iterator for ColumnarSeriesIter<'_> {
     type Item = (f64, f64);
 
     #[inline]
@@ -174,7 +174,7 @@ impl Iterator for Iter<'_> {
     }
 }
 
-impl ExactSizeIterator for Iter<'_> {}
+impl ExactSizeIterator for ColumnarSeriesIter<'_> {}
 
 impl fmt::Debug for ColumnarSeries<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -186,7 +186,15 @@ impl fmt::Debug for ColumnarSeries<'_> {
 
 impl PartialEq for ColumnarSeries<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.xs == other.xs && self.ys == other.ys
+        if self.xs.len() != other.xs.len() || self.ys.len() != other.ys.len() {
+            return false;
+        }
+
+        if self.ys != other.ys {
+            return false;
+        }
+
+        self.xs == other.xs
     }
 }
 
