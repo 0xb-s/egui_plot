@@ -59,6 +59,8 @@ impl<'a> ColumnarSeries<'a> {
     }
 
     /// Number of samples.
+    ///
+    /// `xs.len() == ys.len()` is guaranteed by construction
     #[inline]
     pub fn len(&self) -> usize {
         self.xs.len()
