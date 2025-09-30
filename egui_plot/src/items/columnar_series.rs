@@ -176,7 +176,12 @@ impl Iterator for ColumnarSeriesIter<'_> {
     }
 }
 
-impl ExactSizeIterator for ColumnarSeriesIter<'_> {}
+impl ExactSizeIterator for ColumnarSeriesIter<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.xs.len() - self.i
+    }
+}
 
 impl fmt::Debug for ColumnarSeries<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
