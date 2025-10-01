@@ -363,6 +363,7 @@ impl PlotUi<'_> {
                     options.guide_stroke,
                 );
             }
+            draw_moving_markers(&ctx, *frame, &hits, &visuals, options.marker_radius);
 
             for h in &hits {
                 painter.circle_filled(h.screen_pos, options.marker_radius, h.color);
@@ -535,5 +536,31 @@ fn default_tooltip_ui(ui: &mut egui::Ui, hits: &[HitPoint], pins: &[PinnedPoints
             "Pinned groups: {}  (P pin • U unpin • Del clear)",
             pins.len()
         ));
+    }
+}
+
+/// Render moving markers
+fn draw_moving_markers(
+    ctx: &egui::Context,
+    frame: egui::Rect,
+    hits: &[HitPoint],
+    visuals: &egui::style::Visuals,
+    radius: f32,
+) {
+    if hits.is_empty() {
+        return;
+    }
+
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("moving_markers"));
+    let painter = egui::Painter::new(ctx.clone(), layer, frame);
+
+    let outline = egui::Stroke::new(1.0, visuals.window_stroke().color);
+
+    for h in hits {
+        if !frame.contains(h.screen_pos) {
+            continue;
+        }
+        painter.circle_filled(h.screen_pos, radius, h.color);
+        painter.circle_stroke(h.screen_pos, radius, outline);
     }
 }
