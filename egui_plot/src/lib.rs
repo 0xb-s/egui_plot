@@ -12,17 +12,22 @@ mod axis;
 mod items;
 mod legend;
 mod memory;
+// mod plot_actions;
+mod collect_events;
 mod plot_ui;
 mod transform;
-
 use std::{cmp::Ordering, ops::RangeInclusive, sync::Arc};
-
+mod action;
+pub use crate::action::PlotEvent;
+pub use crate::action::{ActionExecutor, ActionQueue};
+pub use crate::action::{ChangeCause, InputInfo, PinSnapshot};
 use ahash::HashMap;
 use egui::{
     Align2, Color32, CursorIcon, Id, Layout, NumExt as _, PointerButton, Pos2, Rangef, Rect,
     Response, Sense, Shape, Stroke, TextStyle, Ui, Vec2, Vec2b, WidgetText, epaint, remap_clamp,
     vec2,
 };
+
 use emath::Float as _;
 
 pub use crate::{
@@ -131,6 +136,7 @@ pub struct PlotResponse<R> {
     /// A plot item can be hovered either by hovering its representation in the plot (line, marker, etc.)
     /// or by hovering the item in the legend.
     pub hovered_plot_item: Option<Id>,
+    pub events: Vec<PlotEvent>,
 }
 
 // ----------------------------------------------------------------------------
@@ -819,7 +825,6 @@ impl<'a> Plot<'a> {
             grid_spacing,
             linked_axes,
             linked_cursors,
-
             clamp_grid,
             grid_spacers,
             sense,
@@ -876,7 +881,12 @@ impl<'a> Plot<'a> {
         );
 
         // Allocate the plot window.
-        let response = ui.allocate_rect(plot_rect, sense);
+        let mut response = ui.allocate_rect(plot_rect, sense);
+
+        // Make the plot take focus so it can receive key input
+        if response.clicked() {
+            response.request_focus();
+        }
 
         let x_axis_responses = x_axis_widgets
             .iter()
@@ -929,23 +939,23 @@ impl<'a> Plot<'a> {
 
         let last_plot_transform = mem.transform;
 
-        // Call the plot build function.
         let mut plot_ui = PlotUi {
             ctx: ui.ctx().clone(),
-            items: Vec::new(),
+            actions: ActionQueue::new(),
             next_auto_color_idx: 0,
             last_plot_transform,
             last_auto_bounds: mem.auto_bounds,
-            response,
-            bounds_modifications: Vec::new(),
+            response: response.clone(),
             called_once: false,
         };
+
         let inner = build_fn(&mut plot_ui);
+
         let PlotUi {
-            mut items,
-            mut response,
+            actions,
+            response: _throwaway_resp,
             last_plot_transform,
-            bounds_modifications,
+            last_auto_bounds,
             ..
         } = plot_ui;
 
@@ -962,48 +972,50 @@ impl<'a> Plot<'a> {
                 ));
         }
 
-        // --- Legend ---
+        let applied = ActionExecutor::apply(
+            actions,
+            *last_plot_transform.bounds(),
+            last_auto_bounds,
+            None,
+            Some(&response),
+        );
+
+        let mut items = applied.items;
+        mem.auto_bounds = applied.auto_bounds;
+        let mut bounds = applied.bounds;
+
         let legend = legend_config
             .and_then(|config| LegendWidget::try_new(plot_rect, config, &items, &mem.hidden_items));
-        // Don't show hover cursor when hovering over legend.
+
         if mem.hovered_legend_item.is_some() {
             show_x = false;
             show_y = false;
         }
-        // Remove the deselected items.
+
         items.retain(|item| !mem.hidden_items.contains(&item.id()));
-        // Highlight the hovered items.
+
         if let Some(item_id) = &mem.hovered_legend_item {
             items
                 .iter_mut()
                 .filter(|entry| &entry.id() == item_id)
                 .for_each(|entry| entry.highlight());
         }
-        // Move highlighted items to front.
+
         items.sort_by_key(|item| item.highlighted());
 
-        // --- Bound computation ---
-        let mut bounds = *last_plot_transform.bounds();
-
-        // Find the cursors from other plots we need to draw
         let draw_cursors: Vec<Cursor> = if let Some((id, _)) = linked_cursors.as_ref() {
             ui.data_mut(|data| {
                 let frames: &mut CursorLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 let cursors = frames.0.entry(*id).or_default();
 
-                // Look for our previous frame
                 let index = cursors
                     .iter()
                     .enumerate()
                     .find(|(_, frame)| frame.id == plot_id)
                     .map(|(i, _)| i);
 
-                // Remove our previous frame and all older frames as these are no longer displayed. This avoids
-                // unbounded growth, as we add an entry each time we draw a plot.
                 index.map(|index| cursors.drain(0..=index));
 
-                // Gather all cursors of the remaining frames. This will be all the cursors of the
-                // other plots in the group. We want to draw these in the current plot too.
                 cursors
                     .iter()
                     .flat_map(|frame| frame.cursors.iter().copied())
@@ -1035,40 +1047,11 @@ impl<'a> Plot<'a> {
             mem.auto_bounds = true.into();
         }
 
-        let any_dynamic_modifications = !bounds_modifications.is_empty();
-        // Apply bounds modifications.
-        for modification in bounds_modifications {
-            match modification {
-                BoundsModification::SetX(range) => {
-                    bounds.min[0] = *range.start();
-                    bounds.max[0] = *range.end();
-                    mem.auto_bounds.x = false;
-                }
-                BoundsModification::SetY(range) => {
-                    bounds.min[1] = *range.start();
-                    bounds.max[1] = *range.end();
-                    mem.auto_bounds.y = false;
-                }
-                BoundsModification::Translate(delta) => {
-                    let delta = (delta.x as f64, delta.y as f64);
-                    bounds.translate(delta);
-                    mem.auto_bounds = false.into();
-                }
-                BoundsModification::AutoBounds(new_auto_bounds) => {
-                    mem.auto_bounds = new_auto_bounds;
-                }
-                BoundsModification::Zoom(zoom_factor, center) => {
-                    bounds.zoom(zoom_factor, center);
-                    mem.auto_bounds = false.into();
-                }
-            }
-        }
-
-        // Reset bounds to initial bounds if they haven't been modified.
-        if (!default_auto_bounds.x && !any_dynamic_modifications) || mem.auto_bounds.x {
+        // Reset bounds to initial bounds if they haven't been modified programmatically.
+        if (!default_auto_bounds.x) || mem.auto_bounds.x {
             bounds.set_x(&min_auto_bounds);
         }
-        if (!default_auto_bounds.y && !any_dynamic_modifications) || mem.auto_bounds.y {
+        if (!default_auto_bounds.y) || mem.auto_bounds.y {
             bounds.set_y(&min_auto_bounds);
         }
 
@@ -1098,7 +1081,6 @@ impl<'a> Plot<'a> {
 
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
 
-        // Enforce aspect ratio
         if let Some(data_aspect) = data_aspect {
             if let Some((_, linked_axes)) = &linked_axes {
                 let change_x = linked_axes.y && !linked_axes.x;
@@ -1170,7 +1152,6 @@ impl<'a> Plot<'a> {
         if allow_boxed_zoom {
             // Save last click to allow boxed zooming
             if response.drag_started() && response.dragged_by(boxed_zoom_pointer_button) {
-                // it would be best for egui that input has a memory of the last click pos because it's a common pattern
                 mem.last_click_pos_for_zoom = response.hover_pos();
             }
             let box_start_pos = mem.last_click_pos_for_zoom;
@@ -1262,19 +1243,19 @@ impl<'a> Plot<'a> {
         // --- transform initialized
 
         // Add legend widgets to plot
-        let bounds = mem.transform.bounds();
-        let x_axis_range = bounds.range_x();
+        let bounds_now = mem.transform.bounds();
+        let x_axis_range = bounds_now.range_x();
         let x_steps = Arc::new({
             let input = GridInput {
-                bounds: (bounds.min[0], bounds.max[0]),
+                bounds: (bounds_now.min[0], bounds_now.max[0]),
                 base_step_size: mem.transform.dvalue_dpos()[0].abs() * grid_spacing.min as f64,
             };
             (grid_spacers[0])(input)
         });
-        let y_axis_range = bounds.range_y();
+        let y_axis_range = bounds_now.range_y();
         let y_steps = Arc::new({
             let input = GridInput {
-                bounds: (bounds.min[1], bounds.max[1]),
+                bounds: (bounds_now.min[1], bounds_now.max[1]),
                 base_step_size: mem.transform.dvalue_dpos()[1].abs() * grid_spacing.min as f64,
             };
             (grid_spacers[1])(input)
@@ -1367,7 +1348,8 @@ impl<'a> Plot<'a> {
         let transform = mem.transform;
         mem.store(ui.ctx(), plot_id);
 
-        let response = if show_x || show_y {
+        // Cursor
+        response = if show_x || show_y {
             response.on_hover_cursor(CursorIcon::Crosshair)
         } else {
             response
@@ -1375,12 +1357,90 @@ impl<'a> Plot<'a> {
 
         ui.advance_cursor_after_rect(complete_rect);
 
+        let mut events = applied.events;
+
+        // Hover event:
+        if let Some(screen) = response.hover_pos() {
+            let pos = transform.value_from_position(screen);
+            events.push(PlotEvent::Hover { pos });
+        }
+
+        if response.has_focus() {
+            let pressed = |k: egui::Key| ui.ctx().input(|i| i.key_pressed(k));
+            let released = |k: egui::Key| ui.ctx().input(|i| i.key_released(k));
+            let mods = ui.ctx().input(|i| i.modifiers);
+
+            for &k in &[
+                egui::Key::P,
+                egui::Key::U,
+                egui::Key::Delete,
+                egui::Key::ArrowLeft,
+                egui::Key::ArrowRight,
+                egui::Key::ArrowUp,
+                egui::Key::ArrowDown,
+            ] {
+                if pressed(k) {
+                    events.push(PlotEvent::KeyPressed {
+                        key: k,
+                        modifiers: mods,
+                    });
+                }
+                if released(k) {
+                    events.push(PlotEvent::KeyReleased {
+                        key: k,
+                        modifiers: mods,
+                    });
+                }
+            }
+
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::P)) {
+                if let Some(ptr) = ui.ctx().input(|i| i.pointer.latest_pos()) {
+                    let plot = transform.value_from_position(ptr);
+                    events.push(PlotEvent::PinAdded {
+                        snapshot: crate::action::PinSnapshot {
+                            plot_x: plot.x,
+                            rows: Vec::new(),
+                        },
+                    });
+                }
+            }
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::U)) {
+                events.push(PlotEvent::PinRemoved { index: 0 });
+            }
+            if ui.ctx().input(|i| i.key_pressed(egui::Key::Delete)) {
+                events.push(PlotEvent::PinsCleared);
+            }
+        }
+
+        let old_bounds = *last_plot_transform.bounds();
+        let new_bounds = *transform.bounds();
+        if old_bounds != new_bounds {
+            events.push(PlotEvent::BoundsChanged {
+                old: old_bounds,
+                new: new_bounds,
+                cause: ChangeCause::Programmatic,
+            });
+        }
+
         PlotResponse {
             inner,
             response,
             transform,
             hovered_plot_item,
+            events,
         }
+    }
+
+    pub fn show_actions<F, R>(
+        self,
+        ui: &mut egui::Ui,
+        build_fn: F,
+    ) -> (egui::Response, Vec<crate::action::PlotEvent>)
+    where
+        F: for<'p> FnOnce(&mut crate::plot_ui::PlotUi<'p>) -> R,
+    {
+        let pr = self.show_dyn(ui, Box::new(build_fn));
+        (pr.response, pr.events)
     }
 }
 
@@ -1504,6 +1564,7 @@ fn axis_widgets<'a>(
 
 /// User-requested modifications to the plot bounds. We collect them in the plot build function to later apply
 /// them at the right time, as other modifications need to happen first.
+#[allow(dead_code)]
 enum BoundsModification {
     SetX(RangeInclusive<f64>),
     SetY(RangeInclusive<f64>),
