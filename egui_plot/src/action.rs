@@ -240,7 +240,6 @@ pub enum PlotAction<I> {
     /// Zoom by a per-axis factor around a plot-space `center`. Disables auto-bounds.
     Zoom(Vec2, PlotPoint),
 
-    // ------------------------ Decorations / overlays --------------------------
     /// Add an overlay `Shape` to be painted after items.
     AddOverlayShape(Shape),
 }
