@@ -164,6 +164,7 @@ impl PlotUi<'_> {
     pub fn show_tooltip_with_options(&mut self, options: &TooltipOptions) {
         self.show_tooltip_across_series_with(options, default_tooltip_ui);
     }
+
     /// Provide options and a closure to build the **tooltip body UI**.
     ///
     /// - `options`: visual behavior knobs (band fill, markers, guide, etc).
@@ -176,6 +177,7 @@ impl PlotUi<'_> {
     /// function; the closure only draws the *tooltip* content (table, custom UI).
     pub fn show_tooltip_across_series_with(
         &mut self,
+
         options: &TooltipOptions,
         ui_builder: impl FnOnce(&mut egui::Ui, &[HitPoint], &[PinnedPoints]),
     ) {
@@ -221,7 +223,7 @@ impl PlotUi<'_> {
         // Collect per-series closest point inside the band:
         let mut hits: Vec<HitPoint> = Vec::new();
 
-        for item in &self.items {
+        for item in self.actions.iter_items() {
             if !item.allow_hover() {
                 continue;
             }
@@ -318,7 +320,7 @@ impl PlotUi<'_> {
         if options.highlight_hovered_lines {
             let names: ahash::AHashSet<&str> =
                 hits.iter().map(|h| h.series_name.as_str()).collect();
-            for item in &mut self.items {
+            for item in self.actions.iter_items_mut() {
                 if names.contains(item.name()) {
                     item.highlight();
                 }
