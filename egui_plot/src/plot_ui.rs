@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use egui::{Color32, Pos2, Response, Vec2, Vec2b, epaint::Hsva};
 
-use crate::{BoundsModification, PlotBounds, PlotItem, PlotPoint, PlotTransform};
+use crate::{PlotBounds, PlotItem, PlotPoint, PlotTransform, action::ActionQueue};
 
 #[allow(unused_imports)] // for links in docstrings
 use crate::Plot;
@@ -11,17 +11,18 @@ use crate::Plot;
 /// provided to [`Plot::show`]. See [`Plot`] for an example of how to use it.
 pub struct PlotUi<'a> {
     pub(crate) ctx: egui::Context,
-    pub(crate) items: Vec<Box<dyn PlotItem + 'a>>,
+    pub(crate) actions: ActionQueue<Box<dyn PlotItem + 'a>>,
     pub(crate) next_auto_color_idx: usize,
     pub(crate) last_plot_transform: PlotTransform,
     pub(crate) last_auto_bounds: Vec2b,
     pub(crate) response: Response,
-    pub(crate) bounds_modifications: Vec<BoundsModification>,
-
     pub(crate) called_once: bool,
 }
 
 impl<'a> PlotUi<'a> {
+    pub fn take_actions(self) -> ActionQueue<Box<dyn PlotItem + 'a>> {
+        self.actions
+    }
     #[inline]
     ///  returns true if this is the first call
     pub(crate) fn ensure_once(&mut self) -> bool {
@@ -56,20 +57,17 @@ impl<'a> PlotUi<'a> {
 
     /// Set the X bounds. Can be useful for implementing alternative plot navigation methods.
     pub fn set_plot_bounds_x(&mut self, range: impl Into<RangeInclusive<f64>>) {
-        self.bounds_modifications
-            .push(BoundsModification::SetX(range.into()));
+        self.actions.set_bounds_x(range.into());
     }
 
     /// Set the Y bounds. Can be useful for implementing alternative plot navigation methods.
     pub fn set_plot_bounds_y(&mut self, range: impl Into<RangeInclusive<f64>>) {
-        self.bounds_modifications
-            .push(BoundsModification::SetY(range.into()));
+        self.actions.set_bounds_y(range.into());
     }
 
     /// Move the plot bounds. Can be useful for implementing alternative plot navigation methods.
     pub fn translate_bounds(&mut self, delta_pos: Vec2) {
-        self.bounds_modifications
-            .push(BoundsModification::Translate(delta_pos));
+        self.actions.translate(delta_pos);
     }
 
     /// Whether the plot axes were in auto-bounds mode in the last frame. If called on the first
@@ -80,10 +78,8 @@ impl<'a> PlotUi<'a> {
 
     /// Set the auto-bounds mode for the plot axes.
     pub fn set_auto_bounds(&mut self, auto_bounds: impl Into<Vec2b>) {
-        self.bounds_modifications
-            .push(BoundsModification::AutoBounds(auto_bounds.into()));
+        self.actions.set_auto_bounds(auto_bounds.into());
     }
-
     /// Can be used to check if the plot was hovered or clicked.
     pub fn response(&self) -> &Response {
         &self.response
@@ -97,10 +93,8 @@ impl<'a> PlotUi<'a> {
     /// - `zoom_factor < 1.0` zooms out, i.e., increases the visible range to show more data.
     /// - `zoom_factor > 1.0` zooms in, i.e., reduces the visible range to show more detail.
     pub fn zoom_bounds(&mut self, zoom_factor: Vec2, center: PlotPoint) {
-        self.bounds_modifications
-            .push(BoundsModification::Zoom(zoom_factor, center));
+        self.actions.zoom(zoom_factor, center);
     }
-
     /// Scale the plot bounds around the hovered position, if any.
     ///
     /// Can be useful for implementing alternative plot navigation methods.
@@ -146,74 +140,64 @@ impl<'a> PlotUi<'a> {
 
     /// Add an arbitrary item.
     pub fn add(&mut self, item: impl PlotItem + 'a) {
-        self.items.push(Box::new(item));
+        self.actions.add_item(Box::new(item));
     }
 
     /// Add an arbitrary item.
-    pub fn add_item(&mut self, item: Box<dyn PlotItem>) {
-        self.items.push(item);
+    pub fn add_item(&mut self, item: Box<dyn PlotItem + 'a>) {
+        self.actions.add_item(item);
     }
-
     /// Add a data line.
     pub fn line(&mut self, mut line: crate::Line<'a>) {
         if line.stroke.color == Color32::TRANSPARENT {
             line.stroke.color = self.auto_color();
         }
-
-        self.items.push(Box::new(line));
+        self.actions.add_item(Box::new(line));
     }
 
     /// Add a polygon. The polygon has to be convex.
     pub fn polygon(&mut self, mut polygon: crate::Polygon<'a>) {
         if polygon.series.is_empty() {
             return;
-        };
-
-        // Give the stroke an automatic color if no color has been assigned.
+        }
         if polygon.stroke.color == Color32::TRANSPARENT {
             polygon.stroke.color = self.auto_color();
         }
-        self.items.push(Box::new(polygon));
+        self.actions.add_item(Box::new(polygon));
     }
 
     /// Add a text.
     pub fn text(&mut self, text: crate::Text) {
         if text.text.is_empty() {
             return;
-        };
-
-        self.items.push(Box::new(text));
+        }
+        self.actions.add_item(Box::new(text));
     }
 
     /// Add data points.
     pub fn points(&mut self, mut points: crate::Points<'a>) {
         if points.series.is_empty() {
             return;
-        };
-
-        // Give the points an automatic color if no color has been assigned.
+        }
         if points.color == Color32::TRANSPARENT {
             points.color = self.auto_color();
         }
-        self.items.push(Box::new(points));
+        self.actions.add_item(Box::new(points));
     }
 
     /// Add arrows.
     pub fn arrows(&mut self, mut arrows: crate::Arrows<'a>) {
         if arrows.origins.is_empty() || arrows.tips.is_empty() {
             return;
-        };
-
-        // Give the arrows an automatic color if no color has been assigned.
+        }
         if arrows.color == Color32::TRANSPARENT {
             arrows.color = self.auto_color();
         }
-        self.items.push(Box::new(arrows));
+        self.actions.add_item(Box::new(arrows));
     }
-
     /// Add an image.
     pub fn image(&mut self, image: crate::PlotImage) {
-        self.items.push(Box::new(image));
+        self.actions.add_item(Box::new(image));
     }
 
     /// Add a horizontal line.
@@ -223,7 +207,7 @@ impl<'a> PlotUi<'a> {
         if hline.stroke.color == Color32::TRANSPARENT {
             hline.stroke.color = self.auto_color();
         }
-        self.items.push(Box::new(hline));
+        self.actions.add_item(Box::new(hline));
     }
 
     /// Add a vertical line.
@@ -233,7 +217,7 @@ impl<'a> PlotUi<'a> {
         if vline.stroke.color == Color32::TRANSPARENT {
             vline.stroke.color = self.auto_color();
         }
-        self.items.push(Box::new(vline));
+        self.actions.add_item(Box::new(vline));
     }
 
     /// Add a box plot diagram.
@@ -241,12 +225,10 @@ impl<'a> PlotUi<'a> {
         if box_plot.boxes.is_empty() {
             return;
         }
-
-        // Give the elements an automatic color if no color has been assigned.
         if PlotItem::color(&box_plot) == Color32::TRANSPARENT {
             box_plot = box_plot.color(self.auto_color());
         }
-        self.items.push(Box::new(box_plot));
+        self.actions.add_item(Box::new(box_plot));
     }
 
     /// Add a bar chart.
@@ -254,14 +236,11 @@ impl<'a> PlotUi<'a> {
         if chart.bars.is_empty() {
             return;
         }
-
-        // Give the elements an automatic color if no color has been assigned.
         if PlotItem::color(&chart) == Color32::TRANSPARENT {
             chart = chart.color(self.auto_color());
         }
-        self.items.push(Box::new(chart));
+        self.actions.add_item(Box::new(chart));
     }
-
     /// Add a shaded [`Band`](`crate::Band`) to the plot.
     ///
     /// A band fills the area between a lower and an upper curve (`y_min(x)` and `y_max(x)`).
@@ -273,6 +252,6 @@ impl<'a> PlotUi<'a> {
         if band.color() == Color32::TRANSPARENT {
             band = band.with_color(self.auto_color());
         }
-        self.items.push(Box::new(band));
+        self.actions.add_item(Box::new(band));
     }
 }
