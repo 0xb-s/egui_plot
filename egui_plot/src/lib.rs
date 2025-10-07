@@ -776,21 +776,19 @@ impl<'a> Plot<'a> {
     }
 
     /// Interact with and add items to the plot and finally draw it.
-    pub fn show<'b, R>(
-        self,
-        ui: &mut Ui,
-        build_fn: impl FnOnce(&mut PlotUi<'b>) -> R + 'a,
-    ) -> PlotResponse<R> {
-        self.show_dyn(ui, Box::new(build_fn))
+    pub fn show<'p, F, R>(self, ui: &mut Ui, build_fn: F) -> PlotResponse<R>
+    where
+        F: FnOnce(&mut PlotUi<'p>) -> R,
+    {
+        self.show_dyn(ui, build_fn)
     }
 
     #[allow(clippy::too_many_lines)] // TODO(emilk): shorten this function
     #[allow(clippy::type_complexity)] // build_fn
-    fn show_dyn<'b, R>(
-        self,
-        ui: &mut Ui,
-        build_fn: Box<dyn FnOnce(&mut PlotUi<'b>) -> R + 'a>,
-    ) -> PlotResponse<R> {
+    fn show_dyn<'p, F, R>(self, ui: &mut Ui, build_fn: F) -> PlotResponse<R>
+    where
+        F: FnOnce(&mut PlotUi<'p>) -> R,
+    {
         let Self {
             id_source,
             id,
@@ -862,15 +860,14 @@ impl<'a> Plot<'a> {
                     }
                 })
                 .at_least(min_size.y);
+
             vec2(width, height)
         };
 
-        // Determine complete rect of widget.
         let complete_rect = Rect {
             min: pos,
             max: pos + size,
         };
-
         let plot_id = id.unwrap_or_else(|| ui.make_persistent_id(id_source));
 
         let ([x_axis_widgets, y_axis_widgets], plot_rect) = axis_widgets(
@@ -880,22 +877,24 @@ impl<'a> Plot<'a> {
             [&x_axes, &y_axes],
         );
 
-        // Allocate the plot window.
+        // Allocate the plot window.s
         let mut response = ui.allocate_rect(plot_rect, sense);
-
-        // Make the plot take focus so it can receive key input
-        if response.clicked() {
+        if response.clicked() || response.secondary_clicked() || response.middle_clicked() {
+            response.request_focus();
+        }
+        if response.contains_pointer() && ui.input(|i| i.pointer.any_pressed()) {
             response.request_focus();
         }
 
+        // Axis hit-areas for axis-zoom-drag
         let x_axis_responses = x_axis_widgets
             .iter()
             .map(|widget| {
-                let axis_response = ui.allocate_rect(widget.rect, Sense::drag());
+                let axis_resp = ui.allocate_rect(widget.rect, Sense::drag());
                 if allow_axis_zoom_drag.x {
-                    axis_response.on_hover_cursor(CursorIcon::ResizeHorizontal)
+                    axis_resp.on_hover_cursor(CursorIcon::ResizeHorizontal)
                 } else {
-                    axis_response
+                    axis_resp
                 }
             })
             .collect::<Vec<_>>();
@@ -903,26 +902,24 @@ impl<'a> Plot<'a> {
         let y_axis_responses = y_axis_widgets
             .iter()
             .map(|widget| {
-                let axis_response = ui.allocate_rect(widget.rect, Sense::drag());
-
+                let axis_resp = ui.allocate_rect(widget.rect, Sense::drag());
                 if allow_axis_zoom_drag.y {
-                    axis_response.on_hover_cursor(CursorIcon::ResizeVertical)
+                    axis_resp.on_hover_cursor(CursorIcon::ResizeVertical)
                 } else {
-                    axis_response
+                    axis_resp
                 }
             })
             .collect::<Vec<_>>();
 
-        // Load or initialize the memory.
+        // Memory
         ui.ctx().check_for_id_clash(plot_id, plot_rect, "Plot");
-
         let mut mem = if reset {
             if let Some((name, _)) = linked_axes.as_ref() {
                 ui.data_mut(|data| {
                     let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                     link_groups.0.remove(name);
                 });
-            };
+            }
             None
         } else {
             PlotMemory::load(ui.ctx(), plot_id)
@@ -953,7 +950,7 @@ impl<'a> Plot<'a> {
 
         let PlotUi {
             actions,
-            response: _throwaway_resp,
+            response: _,
             last_plot_transform,
             last_auto_bounds,
             ..
@@ -972,6 +969,7 @@ impl<'a> Plot<'a> {
                 ));
         }
 
+        // Apply actions (bounds first, then items, then overlays)
         let applied = ActionExecutor::apply(
             actions,
             *last_plot_transform.bounds(),
@@ -984,15 +982,20 @@ impl<'a> Plot<'a> {
         mem.auto_bounds = applied.auto_bounds;
         let mut bounds = applied.bounds;
 
+        // IMPORTANT: create events ONCE here and keep pushing into it
+        let mut events = applied.events;
+        let mut last_user_cause: Option<ChangeCause> = None;
+
+        // Legend filtering/highlighting
         let legend = legend_config
-            .and_then(|config| LegendWidget::try_new(plot_rect, config, &items, &mem.hidden_items));
+            .and_then(|cfg| LegendWidget::try_new(plot_rect, cfg, &items, &mem.hidden_items));
 
         if mem.hovered_legend_item.is_some() {
             show_x = false;
             show_y = false;
         }
 
-        items.retain(|item| !mem.hidden_items.contains(&item.id()));
+        items.retain(|it| !mem.hidden_items.contains(&it.id()));
 
         if let Some(item_id) = &mem.hovered_legend_item {
             items
@@ -1001,20 +1004,22 @@ impl<'a> Plot<'a> {
                 .for_each(|entry| entry.highlight());
         }
 
-        items.sort_by_key(|item| item.highlighted());
+        items.sort_by_key(|it| it.highlighted());
 
+        // Linked cursors
         let draw_cursors: Vec<Cursor> = if let Some((id, _)) = linked_cursors.as_ref() {
             ui.data_mut(|data| {
                 let frames: &mut CursorLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 let cursors = frames.0.entry(*id).or_default();
 
-                let index = cursors
+                if let Some(index) = cursors
                     .iter()
                     .enumerate()
                     .find(|(_, frame)| frame.id == plot_id)
-                    .map(|(i, _)| i);
-
-                index.map(|index| cursors.drain(0..=index));
+                    .map(|(i, _)| i)
+                {
+                    cursors.drain(0..=index);
+                }
 
                 cursors
                     .iter()
@@ -1025,7 +1030,7 @@ impl<'a> Plot<'a> {
             Vec::new()
         };
 
-        // Transfer the bounds from a link group.
+        // Linked bounds
         if let Some((id, axes)) = linked_axes.as_ref() {
             ui.data_mut(|data| {
                 let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
@@ -1038,16 +1043,24 @@ impl<'a> Plot<'a> {
                         bounds.set_y(&linked_bounds.bounds);
                         mem.auto_bounds.y = linked_bounds.auto_bounds.y;
                     }
-                };
+                }
             });
-        };
-
-        // Allow double-clicking to reset to the initial bounds.
-        if allow_double_click_reset && response.double_clicked() {
-            mem.auto_bounds = true.into();
         }
 
-        // Reset bounds to initial bounds if they haven't been modified programmatically.
+        // Double-click reset
+        if allow_double_click_reset && response.double_clicked() {
+            mem.auto_bounds = true.into();
+            events.push(PlotEvent::ResetApplied {
+                input: InputInfo {
+                    pointer: ui.input(|i| i.pointer.hover_pos()),
+                    button: Some(PointerButton::Primary),
+                    modifiers: ui.input(|i| i.modifiers),
+                },
+            });
+            last_user_cause = Some(ChangeCause::Reset);
+        }
+
+        // Reset to initial bounds if still auto
         if (!default_auto_bounds.x) || mem.auto_bounds.x {
             bounds.set_x(&min_auto_bounds);
         }
@@ -1055,32 +1068,33 @@ impl<'a> Plot<'a> {
             bounds.set_y(&min_auto_bounds);
         }
 
+        // Auto-fit to content
         let auto_x = mem.auto_bounds.x && (!min_auto_bounds.is_valid_x() || default_auto_bounds.x);
         let auto_y = mem.auto_bounds.y && (!min_auto_bounds.is_valid_y() || default_auto_bounds.y);
-
-        // Set bounds automatically based on content.
         if auto_x || auto_y {
-            for item in &items {
-                let item_bounds = item.bounds();
+            for it in &items {
+                let b = it.bounds();
                 if auto_x {
-                    bounds.merge_x(&item_bounds);
+                    bounds.merge_x(&b);
                 }
                 if auto_y {
-                    bounds.merge_y(&item_bounds);
+                    bounds.merge_y(&b);
                 }
             }
-
             if auto_x {
                 bounds.add_relative_margin_x(margin_fraction);
             }
-
             if auto_y {
                 bounds.add_relative_margin_y(margin_fraction);
             }
+            events.push(PlotEvent::AutoFitApplied { new: bounds });
+            last_user_cause.get_or_insert(ChangeCause::AutoFit);
         }
 
+        // Build transform
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
 
+        // Aspect
         if let Some(data_aspect) = data_aspect {
             if let Some((_, linked_axes)) = &linked_axes {
                 let change_x = linked_axes.y && !linked_axes.x;
@@ -1096,9 +1110,22 @@ impl<'a> Plot<'a> {
             }
         }
 
-        // Dragging
+        // --- Interactions --------------------------------------------------------
+
+        // Pan
         if allow_drag.any() && response.dragged_by(PointerButton::Primary) {
             response = response.on_hover_cursor(CursorIcon::Grabbing);
+
+            if response.drag_started() {
+                events.push(PlotEvent::PanStarted {
+                    input: InputInfo {
+                        pointer: ui.input(|i| i.pointer.press_origin()),
+                        button: Some(PointerButton::Primary),
+                        modifiers: ui.input(|i| i.modifiers),
+                    },
+                });
+            }
+
             let mut delta = -response.drag_delta();
             if !allow_drag.x {
                 delta.x = 0.0;
@@ -1106,15 +1133,39 @@ impl<'a> Plot<'a> {
             if !allow_drag.y {
                 delta.y = 0.0;
             }
+
+            // Pan delta in plot units (telemetry)
+            let d = mem.transform.dvalue_dpos();
+            events.push(PlotEvent::PanDelta {
+                delta_plot_x: (delta.x as f64) * d[0],
+                delta_plot_y: (delta.y as f64) * d[1],
+                input: InputInfo {
+                    pointer: ui.input(|i| i.pointer.hover_pos()),
+                    button: Some(PointerButton::Primary),
+                    modifiers: ui.input(|i| i.modifiers),
+                },
+            });
+
             mem.transform
                 .translate_bounds((delta.x as f64, delta.y as f64));
             mem.auto_bounds = mem.auto_bounds.and(!allow_drag);
+            last_user_cause = Some(ChangeCause::Pan);
+
+            if response.drag_stopped() {
+                events.push(PlotEvent::PanFinished {
+                    input: InputInfo {
+                        pointer: ui.input(|i| i.pointer.hover_pos()),
+                        button: Some(PointerButton::Primary),
+                        modifiers: ui.input(|i| i.modifiers),
+                    },
+                });
+            }
         }
 
-        // Drag axes to zoom:
+        // Axis zoom drag
         for d in 0..2 {
             if allow_axis_zoom_drag[d] {
-                if let Some(axis_response) = (if d == 0 {
+                if let Some(axis_resp) = (if d == 0 {
                     &x_axis_responses
                 } else {
                     &y_axis_responses
@@ -1122,87 +1173,130 @@ impl<'a> Plot<'a> {
                 .iter()
                 .find(|r| r.dragged_by(PointerButton::Primary))
                 {
-                    if let Some(drag_start_pos) = ui.input(|i| i.pointer.press_origin()) {
-                        let delta = axis_response.drag_delta();
-
+                    if let Some(start) = ui.input(|i| i.pointer.press_origin()) {
+                        let delta = axis_resp.drag_delta();
                         let axis_zoom = 1.0 + (0.02 * delta[d]).clamp(-1.0, 1.0);
 
                         let zoom = if data_aspect.is_some() {
-                            // Zoom both axes equally to maintain aspect ratio:
                             Vec2::splat(axis_zoom)
                         } else {
-                            let mut zoom = Vec2::splat(1.0);
-                            zoom[d] = axis_zoom;
-                            zoom
+                            let mut z = Vec2::splat(1.0);
+                            z[d] = axis_zoom;
+                            z
                         };
 
                         if zoom != Vec2::splat(1.0) {
+                            if axis_resp.drag_started() {
+                                events.push(PlotEvent::AxisZoomDragStarted {
+                                    axis_x: d == 0,
+                                    axis_y: d == 1,
+                                    input: InputInfo {
+                                        pointer: Some(start),
+                                        button: Some(PointerButton::Primary),
+                                        modifiers: ui.input(|i| i.modifiers),
+                                    },
+                                });
+                            }
+
                             let mut zoom_center = plot_rect.center();
-                            zoom_center[d] = drag_start_pos[d];
+                            zoom_center[d] = start[d];
                             mem.transform.zoom(zoom, zoom_center);
                             mem.auto_bounds = false.into();
+
+                            events.push(PlotEvent::AxisZoomDragDelta {
+                                factor_x: zoom.x,
+                                factor_y: zoom.y,
+                                input: InputInfo {
+                                    pointer: Some(start),
+                                    button: Some(PointerButton::Primary),
+                                    modifiers: ui.input(|i| i.modifiers),
+                                },
+                            });
+
+                            last_user_cause = Some(if d == 0 {
+                                ChangeCause::AxisZoomX
+                            } else {
+                                ChangeCause::AxisZoomY
+                            });
+
+                            if axis_resp.drag_stopped() {
+                                events.push(PlotEvent::AxisZoomDragFinished {
+                                    input: InputInfo {
+                                        pointer: ui.input(|i| i.pointer.hover_pos()),
+                                        button: Some(PointerButton::Primary),
+                                        modifiers: ui.input(|i| i.modifiers),
+                                    },
+                                });
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Zooming
+        // Boxed zoom
         let mut boxed_zoom_rect = None;
         if allow_boxed_zoom {
-            // Save last click to allow boxed zooming
             if response.drag_started() && response.dragged_by(boxed_zoom_pointer_button) {
                 mem.last_click_pos_for_zoom = response.hover_pos();
+                events.push(PlotEvent::BoxZoomStarted {
+                    screen_start: mem.last_click_pos_for_zoom.unwrap_or(plot_rect.center()),
+                    input: InputInfo {
+                        pointer: mem.last_click_pos_for_zoom,
+                        button: Some(boxed_zoom_pointer_button),
+                        modifiers: ui.input(|i| i.modifiers),
+                    },
+                });
             }
-            let box_start_pos = mem.last_click_pos_for_zoom;
-            let box_end_pos = response.hover_pos();
-            if let (Some(box_start_pos), Some(box_end_pos)) = (box_start_pos, box_end_pos) {
-                // while dragging prepare a Shape and draw it later on top of the plot
+            let (start, end) = (mem.last_click_pos_for_zoom, response.hover_pos());
+            if let (Some(s), Some(e)) = (start, end) {
                 if response.dragged_by(boxed_zoom_pointer_button) {
                     response = response.on_hover_cursor(CursorIcon::ZoomIn);
-                    let rect = epaint::Rect::from_two_pos(box_start_pos, box_end_pos);
+                    let rect = epaint::Rect::from_two_pos(s, e);
                     boxed_zoom_rect = Some((
                         epaint::RectShape::stroke(
                             rect,
                             0.0,
                             epaint::Stroke::new(4., Color32::DARK_BLUE),
                             egui::StrokeKind::Middle,
-                        ), // Outer stroke
+                        ),
                         epaint::RectShape::stroke(
                             rect,
                             0.0,
                             epaint::Stroke::new(2., Color32::WHITE),
                             egui::StrokeKind::Middle,
-                        ), // Inner stroke
+                        ),
                     ));
                 }
-                // when the click is release perform the zoom
                 if response.drag_stopped() {
-                    let box_start_pos = mem.transform.value_from_position(box_start_pos);
-                    let box_end_pos = mem.transform.value_from_position(box_end_pos);
+                    let s_val = mem.transform.value_from_position(s);
+                    let e_val = mem.transform.value_from_position(e);
                     let new_bounds = PlotBounds {
-                        min: [
-                            box_start_pos.x.min(box_end_pos.x),
-                            box_start_pos.y.min(box_end_pos.y),
-                        ],
-                        max: [
-                            box_start_pos.x.max(box_end_pos.x),
-                            box_start_pos.y.max(box_end_pos.y),
-                        ],
+                        min: [s_val.x.min(e_val.x), s_val.y.min(e_val.y)],
+                        max: [s_val.x.max(e_val.x), s_val.y.max(e_val.y)],
                     };
                     if new_bounds.is_valid() {
                         mem.transform.set_bounds(new_bounds);
                         mem.auto_bounds = false.into();
+                        let new_x = new_bounds.range_x();
+                        let new_y = new_bounds.range_y();
+                        events.push(PlotEvent::BoxZoomFinished {
+                            new_x,
+                            new_y,
+                            input: InputInfo {
+                                pointer: response.hover_pos(),
+                                button: Some(boxed_zoom_pointer_button),
+                                modifiers: ui.input(|i| i.modifiers),
+                            },
+                        });
+                        last_user_cause = Some(ChangeCause::BoxZoom);
                     }
-                    // reset the boxed zoom state
                     mem.last_click_pos_for_zoom = None;
                 }
             }
         }
 
-        // Note: we catch zoom/pan if the response contains the pointer, even if it isn't hovered.
-        // For instance: The user is painting another interactive widget on top of the plot
-        // but they still want to be able to pan/zoom the plot.
+        // Wheel zoom + scroll
         if let (true, Some(hover_pos)) = (
             response.contains_pointer(),
             ui.input(|i| i.pointer.hover_pos()),
@@ -1221,28 +1315,39 @@ impl<'a> Plot<'a> {
                 }
                 if zoom_factor != Vec2::splat(1.0) {
                     mem.transform.zoom(zoom_factor, hover_pos);
+                    events.push(PlotEvent::ZoomDelta {
+                        factor_x: zoom_factor.x,
+                        factor_y: zoom_factor.y,
+                        center_plot_x: mem.transform.value_from_position(hover_pos).x,
+                        center_plot_y: mem.transform.value_from_position(hover_pos).y,
+                        input: InputInfo {
+                            pointer: Some(hover_pos),
+                            button: None,
+                            modifiers: ui.input(|i| i.modifiers),
+                        },
+                    });
+                    last_user_cause = Some(ChangeCause::Zoom);
                     mem.auto_bounds = mem.auto_bounds.and(!allow_zoom);
                 }
             }
+
             if allow_scroll.any() {
-                let mut scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+                let mut scroll = ui.input(|i| i.smooth_scroll_delta);
                 if !allow_scroll.x {
-                    scroll_delta.x = 0.0;
+                    scroll.x = 0.0;
                 }
                 if !allow_scroll.y {
-                    scroll_delta.y = 0.0;
+                    scroll.y = 0.0;
                 }
-                if scroll_delta != Vec2::ZERO {
+                if scroll != Vec2::ZERO {
                     mem.transform
-                        .translate_bounds((-scroll_delta.x as f64, -scroll_delta.y as f64));
+                        .translate_bounds((-scroll.x as f64, -scroll.y as f64));
                     mem.auto_bounds = false.into();
                 }
             }
         }
 
-        // --- transform initialized
-
-        // Add legend widgets to plot
+        // Axes widgets paint (with grid)
         let bounds_now = mem.transform.bounds();
         let x_axis_range = bounds_now.range_x();
         let x_steps = Arc::new({
@@ -1260,6 +1365,7 @@ impl<'a> Plot<'a> {
             };
             (grid_spacers[1])(input)
         });
+
         for (i, mut widget) in x_axis_widgets.into_iter().enumerate() {
             widget.range = x_axis_range.clone();
             widget.transform = Some(mem.transform);
@@ -1275,12 +1381,13 @@ impl<'a> Plot<'a> {
             mem.y_axis_thickness.insert(i, thickness);
         }
 
-        // Initialize values from functions.
+        // Initialize items
         for item in &mut items {
             item.initialize(mem.transform.bounds().range_x());
         }
 
-        let prepared = PreparedPlot {
+        // Draw items/grid/tooltip
+        let prepared: PreparedPlot<'_, '_> = PreparedPlot {
             plot_area_response: &response,
             items,
             show_x,
@@ -1290,8 +1397,8 @@ impl<'a> Plot<'a> {
             show_grid,
             grid_spacing,
             transform: mem.transform,
-            draw_cursor_x: linked_cursors.as_ref().is_some_and(|group| group.1.x),
-            draw_cursor_y: linked_cursors.as_ref().is_some_and(|group| group.1.y),
+            draw_cursor_x: linked_cursors.as_ref().is_some_and(|g| g.1.x),
+            draw_cursor_y: linked_cursors.as_ref().is_some_and(|g| g.1.y),
             draw_cursors,
             cursor_color,
             grid_spacers,
@@ -1300,15 +1407,28 @@ impl<'a> Plot<'a> {
 
         let (plot_cursors, mut hovered_plot_item) = prepared.ui(ui, &response);
 
-        if let Some(boxed_zoom_rect) = boxed_zoom_rect {
-            ui.painter()
-                .with_clip_rect(plot_rect)
-                .add(boxed_zoom_rect.0);
-            ui.painter()
-                .with_clip_rect(plot_rect)
-                .add(boxed_zoom_rect.1);
+        // Click/Context menu -> events
+        if response.clicked() {
+            events.push(PlotEvent::Activate {
+                hovered_item: hovered_plot_item,
+            });
+        }
+        if response.secondary_clicked() {
+            if let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                events.push(PlotEvent::ContextMenuRequested {
+                    screen_pos,
+                    item: hovered_plot_item,
+                });
+            }
         }
 
+        // Draw boxed zoom preview
+        if let Some((outer, inner)) = boxed_zoom_rect {
+            ui.painter().with_clip_rect(plot_rect).add(outer);
+            ui.painter().with_clip_rect(plot_rect).add(inner);
+        }
+
+        // Legend UI (updates hidden/hovered)
         if let Some(mut legend) = legend {
             ui.add(&mut legend);
             mem.hidden_items = legend.hidden_items();
@@ -1319,8 +1439,8 @@ impl<'a> Plot<'a> {
             }
         }
 
+        // Share linked cursors
         if let Some((id, _)) = linked_cursors.as_ref() {
-            // Push the frame we just drew to the list of frames
             ui.data_mut(|data| {
                 let frames: &mut CursorLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 let cursors = frames.0.entry(*id).or_default();
@@ -1331,8 +1451,8 @@ impl<'a> Plot<'a> {
             });
         }
 
+        // Save linked bounds
         if let Some((id, _)) = linked_axes.as_ref() {
-            // Save the linked bounds.
             ui.data_mut(|data| {
                 let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 link_groups.0.insert(
@@ -1348,24 +1468,22 @@ impl<'a> Plot<'a> {
         let transform = mem.transform;
         mem.store(ui.ctx(), plot_id);
 
-        // Cursor
+        // Cursor shape
         response = if show_x || show_y {
             response.on_hover_cursor(CursorIcon::Crosshair)
         } else {
             response
         };
-
         ui.advance_cursor_after_rect(complete_rect);
 
-        let mut events = applied.events;
-
-        // Hover event:
+        // Hover event
         if let Some(screen) = response.hover_pos() {
             let pos = transform.value_from_position(screen);
             events.push(PlotEvent::Hover { pos });
         }
 
-        if response.has_focus() {
+        // Keys / Pins (needs focus or pointer on the plot)
+        if response.has_focus() || response.contains_pointer() {
             let pressed = |k: egui::Key| ui.ctx().input(|i| i.key_pressed(k));
             let released = |k: egui::Key| ui.ctx().input(|i| i.key_released(k));
             let mods = ui.ctx().input(|i| i.modifiers);
@@ -1412,13 +1530,14 @@ impl<'a> Plot<'a> {
             }
         }
 
+        // Final bounds change summary (with best-known cause)
         let old_bounds = *last_plot_transform.bounds();
         let new_bounds = *transform.bounds();
         if old_bounds != new_bounds {
             events.push(PlotEvent::BoundsChanged {
                 old: old_bounds,
                 new: new_bounds,
-                cause: ChangeCause::Programmatic,
+                cause: last_user_cause.unwrap_or(ChangeCause::Programmatic),
             });
         }
 
@@ -1431,15 +1550,15 @@ impl<'a> Plot<'a> {
         }
     }
 
-    pub fn show_actions<F, R>(
+    pub fn show_actions<'p, F, R>(
         self,
         ui: &mut egui::Ui,
         build_fn: F,
     ) -> (egui::Response, Vec<crate::action::PlotEvent>)
     where
-        F: for<'p> FnOnce(&mut crate::plot_ui::PlotUi<'p>) -> R,
+        F: FnOnce(&mut crate::plot_ui::PlotUi<'p>) -> R,
     {
-        let pr = self.show_dyn(ui, Box::new(build_fn));
+        let pr = self.show_dyn(ui, build_fn);
         (pr.response, pr.events)
     }
 }
@@ -1655,19 +1774,19 @@ pub fn uniform_grid_spacer<'a>(spacer: impl Fn(GridInput) -> [f64; 3] + 'a) -> G
 
 // ----------------------------------------------------------------------------
 
-struct PreparedPlot<'a> {
+struct PreparedPlot<'cfg, 'items> {
     /// The response of the whole plot area
-    plot_area_response: &'a Response,
-    items: Vec<Box<dyn PlotItem + 'a>>,
+    plot_area_response: &'items Response,
+    items: Vec<Box<dyn PlotItem + 'items>>,
     show_x: bool,
     show_y: bool,
-    label_formatter: LabelFormatter<'a>,
-    coordinates_formatter: Option<(Corner, CoordinatesFormatter<'a>)>,
+    label_formatter: LabelFormatter<'cfg>,
+    coordinates_formatter: Option<(Corner, CoordinatesFormatter<'cfg>)>,
     // axis_formatters: [AxisFormatter; 2],
     transform: PlotTransform,
     show_grid: Vec2b,
     grid_spacing: Rangef,
-    grid_spacers: [GridSpacer<'a>; 2],
+    grid_spacers: [GridSpacer<'cfg>; 2],
     draw_cursor_x: bool,
     draw_cursor_y: bool,
     draw_cursors: Vec<Cursor>,
@@ -1676,7 +1795,7 @@ struct PreparedPlot<'a> {
     clamp_grid: bool,
 }
 
-impl PreparedPlot<'_> {
+impl PreparedPlot<'_, '_> {
     fn ui(self, ui: &mut Ui, response: &Response) -> (Vec<Cursor>, Option<Id>) {
         let mut axes_shapes = Vec::new();
 
