@@ -1,4 +1,4 @@
-#![allow(rustdoc::missing_crate_level_docs)] 
+#![allow(rustdoc::missing_crate_level_docs)]
 use eframe::{App, Frame, egui};
 use egui::{Align2, Color32};
 use egui_plot::{Line, Plot, PlotEvent, TooltipOptions};
