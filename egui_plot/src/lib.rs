@@ -1110,8 +1110,6 @@ impl<'a> Plot<'a> {
             }
         }
 
-        // --- Interactions --------------------------------------------------------
-
         // Pan
         if allow_drag.any() && response.dragged_by(PointerButton::Primary) {
             response = response.on_hover_cursor(CursorIcon::Grabbing);
@@ -1134,7 +1132,6 @@ impl<'a> Plot<'a> {
                 delta.y = 0.0;
             }
 
-            // Pan delta in plot units (telemetry)
             let d = mem.transform.dvalue_dpos();
             events.push(PlotEvent::PanDelta {
                 delta_plot_x: (delta.x as f64) * d[0],
@@ -1347,7 +1344,6 @@ impl<'a> Plot<'a> {
             }
         }
 
-        // Axes widgets paint (with grid)
         let bounds_now = mem.transform.bounds();
         let x_axis_range = bounds_now.range_x();
         let x_steps = Arc::new({
@@ -1381,7 +1377,6 @@ impl<'a> Plot<'a> {
             mem.y_axis_thickness.insert(i, thickness);
         }
 
-        // Initialize items
         for item in &mut items {
             item.initialize(mem.transform.bounds().range_x());
         }
@@ -1451,7 +1446,6 @@ impl<'a> Plot<'a> {
             });
         }
 
-        // Save linked bounds
         if let Some((id, _)) = linked_axes.as_ref() {
             ui.data_mut(|data| {
                 let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
@@ -1468,7 +1462,6 @@ impl<'a> Plot<'a> {
         let transform = mem.transform;
         mem.store(ui.ctx(), plot_id);
 
-        // Cursor shape
         response = if show_x || show_y {
             response.on_hover_cursor(CursorIcon::Crosshair)
         } else {
@@ -1476,13 +1469,11 @@ impl<'a> Plot<'a> {
         };
         ui.advance_cursor_after_rect(complete_rect);
 
-        // Hover event
         if let Some(screen) = response.hover_pos() {
             let pos = transform.value_from_position(screen);
             events.push(PlotEvent::Hover { pos });
         }
 
-        // Keys / Pins (needs focus or pointer on the plot)
         if response.has_focus() || response.contains_pointer() {
             let pressed = |k: egui::Key| ui.ctx().input(|i| i.key_pressed(k));
             let released = |k: egui::Key| ui.ctx().input(|i| i.key_released(k));
@@ -1530,7 +1521,6 @@ impl<'a> Plot<'a> {
             }
         }
 
-        // Final bounds change summary (with best-known cause)
         let old_bounds = *last_plot_transform.bounds();
         let new_bounds = *transform.bounds();
         if old_bounds != new_bounds {
