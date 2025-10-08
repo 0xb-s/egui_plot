@@ -33,8 +33,8 @@ impl Demo {
     }
 
     fn new() -> Self {
-        let n = 10;
-        let xs: Vec<f64> = (0..n).map(|i| (i as f64) * TWO_PI / (n as f64)).collect();
+        let n = 20;
+        let xs: Vec<f64> = (0..=n).map(|i| (i as f64) * TWO_PI / (n as f64)).collect();
         let f1: Vec<f64> = xs.iter().copied().map(Self::f1_of).collect();
         let f2: Vec<f64> = xs.iter().copied().map(Self::f2_of).collect();
         Self {
@@ -60,6 +60,8 @@ impl App for Demo {
                 .allow_double_click_reset(true)
                 .show_x(true)
                 .show_y(true)
+                .auto_bounds(false)
+                .default_x_bounds(0.0, TWO_PI)
                 .show_actions(ui, |plot_ui| {
                     plot_ui.line(
                         Line::new_xy("f1(t)", xs.as_slice(), f1.as_slice())
@@ -74,8 +76,9 @@ impl App for Demo {
                     plot_ui.show_tooltip_with_options(&TooltipOptions::default());
                 });
 
-
+            println!("--------------------------------");
             for ev in &events {
+                println!("event: {:?}", ev);
                 match ev {
                     PlotEvent::BoundsChanged { old, new, cause } => {
                         self.last_event = format!(
@@ -85,9 +88,9 @@ impl App for Demo {
                             new.min()[0], new.max()[0], new.min()[1], new.max()[1],
                         );
 
-
-                        let x_min = new.min()[0];
-                        let x_max = new.max()[0];
+                        // Prevent weird bounds recalculation when it's at the edge of the plot
+                        let x_min = new.min()[0] - 0.0001;
+                        let x_max = new.max()[0] + 0.0001;
 
                         let t_min = x_min / TWO_PI;
                         let t_max = x_max / TWO_PI;
@@ -95,7 +98,7 @@ impl App for Demo {
 
                         let n = self.n;
 
-                        for i in 0..n {
+                        for i in 0..=n {
                             let t = (i as f64) / (n as f64) * delta + t_min;
                             let theta = TWO_PI * t;
                             self.xs[i] = theta;
