@@ -1060,11 +1060,10 @@ impl<'a> Plot<'a> {
             last_user_cause = Some(ChangeCause::Reset);
         }
 
-        // Reset to initial bounds if still auto
-        if (!default_auto_bounds.x) || mem.auto_bounds.x {
+        if mem.auto_bounds.x {
             bounds.set_x(&min_auto_bounds);
         }
-        if (!default_auto_bounds.y) || mem.auto_bounds.y {
+        if mem.auto_bounds.y {
             bounds.set_y(&min_auto_bounds);
         }
 
