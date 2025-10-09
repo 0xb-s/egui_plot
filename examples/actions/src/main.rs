@@ -78,7 +78,7 @@ impl App for Demo {
 
             println!("--------------------------------");
             for ev in &events {
-                println!("event: {:?}", ev);
+               println!("event: {ev:?}");
                 match ev {
                     PlotEvent::BoundsChanged { old, new, cause } => {
                         self.last_event = format!(
