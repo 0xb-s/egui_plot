@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use std::{collections::VecDeque, ops::RangeInclusive};
 
 use egui::{Id, Key, Modifiers, PointerButton, Pos2, Shape, Vec2, Vec2b};
 
@@ -8,7 +8,7 @@ use crate::{PlotPoint, transform::PlotBounds};
 ///
 /// This single enum is used for all change types (like zooming or panning).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChangeCause {
+pub enum BoundsChangeCause {
     /// Code requested a change via input actions (`SetBounds`*/Translate/Zoom).
     Programmatic,
     /// User panned.
@@ -41,7 +41,7 @@ pub struct InputInfo {
 }
 
 /// Public identifier type used in item-related events (hover/click/legend).
-pub type ItemId = Id;
+pub type PlotItemId = Id;
 
 /// Lightweight snapshot for a "pin".
 #[derive(Debug, Clone)]
@@ -80,6 +80,19 @@ pub trait BoundsLike: Clone {
 /// These are *non-mutating*; they describe user intent and frame results.
 /// Emit them as they happen and also add a single `BoundsChanged` at the end
 /// of the frame if the bounds differ from the frame start.
+/// # Example
+/// ```rs
+/// let (_resp, events) = Plot::new("demo")
+///     .show_actions(ui, |p| {
+///         p.line(Line::new_xy("sin", xs.as_slice(), ys.as_slice());
+///     });
+///
+/// for ev in &events {
+///     if let PlotEvent::BoundsChanged { new, .. } = ev {
+///
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub enum PlotEvent {
     /// keyboard
@@ -95,7 +108,7 @@ pub enum PlotEvent {
 
     ///UI
     Activate {
-        hovered_item: Option<ItemId>,
+        hovered_item: Option<PlotItemId>,
     },
 
     /// Cursor
@@ -106,21 +119,21 @@ pub enum PlotEvent {
     /// Menu
     ContextMenuRequested {
         screen_pos: Pos2,
-        item: Option<ItemId>,
+        item: Option<PlotItemId>,
     },
 
     // frame summaries
     BoundsChanged {
         old: PlotBounds,
         new: PlotBounds,
-        cause: ChangeCause,
+        cause: BoundsChangeCause,
     },
 
     /// Transform was updated explicitly
     TransformChanged {
         old: PlotBounds,
         new: PlotBounds,
-        cause: ChangeCause,
+        cause: BoundsChangeCause,
     },
 
     /// Auto-fit was applied with the new resulting bounds.
@@ -191,19 +204,19 @@ pub enum PlotEvent {
     },
 
     ItemHovered {
-        item: ItemId,
+        item: PlotItemId,
         pos: PlotPoint,
     },
 
     ItemClicked {
-        item: ItemId,
+        item: PlotItemId,
         pos: PlotPoint,
         button: PointerButton,
         input: InputInfo,
     },
 
     LegendItemToggled {
-        item: ItemId,
+        item: PlotItemId,
         now_visible: bool,
     },
 
@@ -240,20 +253,20 @@ pub enum PlotAction<I> {
     /// Zoom by a per-axis factor around a plot-space `center`. Disables auto-bounds.
     Zoom(Vec2, PlotPoint),
 
+    // ------------------------ Decorations / overlays --------------------------
     /// Add an overlay `Shape` to be painted after items.
     AddOverlayShape(Shape),
 }
 impl<I> PlotAction<I> {
     pub fn into_event(self) -> Option<PlotEvent> {
         match self {
-            // Self::AddItem(_) => None,
             Self::SetBoundsX(range) => Some(PlotEvent::BoundsChanged {
                 old: PlotBounds::NOTHING,
                 new: PlotBounds {
                     min: [*range.start(), f64::NEG_INFINITY],
                     max: [*range.end(), f64::INFINITY],
                 },
-                cause: ChangeCause::Programmatic,
+                cause: BoundsChangeCause::Programmatic,
             }),
             Self::SetBoundsY(range) => Some(PlotEvent::BoundsChanged {
                 old: PlotBounds::NOTHING,
@@ -261,31 +274,27 @@ impl<I> PlotAction<I> {
                     min: [f64::NEG_INFINITY, *range.start()],
                     max: [f64::INFINITY, *range.end()],
                 },
-                cause: ChangeCause::Programmatic,
+                cause: BoundsChangeCause::Programmatic,
             }),
             Self::Translate(_)
             | Self::Zoom(_, _)
             | Self::SetAutoBounds(_)
             | Self::AddOverlayShape(_)
             | Self::AddItem(_) => None,
-            //     Self::Zoom(_, _) => None,
-            //     Self::SetAutoBounds(_) => None,
-            //     Self::AddOverlayShape(_) => None,
         }
     }
 }
 
-// FIFO queue for actions.
 #[derive(Debug)]
 pub struct ActionQueue<I> {
-    actions: Vec<PlotAction<I>>,
+    actions: VecDeque<PlotAction<I>>,
 }
 
 impl<I> Default for ActionQueue<I> {
     #[inline]
     fn default() -> Self {
         Self {
-            actions: Vec::new(),
+            actions: VecDeque::new(),
         }
     }
 }
@@ -297,13 +306,13 @@ impl<I> ActionQueue<I> {
         Self::default()
     }
 
-    /// Push a single action.
+    /// Push a single action (to the back; FIFO).
     #[inline]
     pub fn push(&mut self, action: PlotAction<I>) {
-        self.actions.push(action);
+        self.actions.push_back(action);
     }
 
-    /// Extend with a batch of actions.
+    /// Extend with a batch of actions (preserves order).
     #[inline]
     pub fn extend<T: IntoIterator<Item = PlotAction<I>>>(&mut self, iter: T) {
         self.actions.extend(iter);
@@ -324,7 +333,7 @@ impl<I> ActionQueue<I> {
     /// Drain the internal action list by value.
     #[inline]
     pub fn drain(self) -> Vec<PlotAction<I>> {
-        self.actions
+        Vec::from(self.actions) // moves out in order
     }
 
     #[inline]
@@ -343,7 +352,7 @@ impl<I> ActionQueue<I> {
     }
 
     #[inline]
-    pub fn translate(&mut self, delta: Vec2) {
+    pub fn translate(&mut self, delta: egui::Vec2) {
         self.push(PlotAction::Translate(delta));
     }
 
@@ -358,8 +367,7 @@ impl<I> ActionQueue<I> {
         self.actions.iter()
     }
 
-    /// If you want to specifically iterate over **items** that were added,
-    /// you need to filter the `PlotAction::AddItem` variant:
+    /// Iterate over **items** that were added.
     #[inline]
     pub fn iter_items(&self) -> impl Iterator<Item = &I> {
         self.actions.iter().filter_map(|act| {
@@ -371,6 +379,7 @@ impl<I> ActionQueue<I> {
         })
     }
 
+    #[inline]
     pub fn iter_items_mut(&mut self) -> impl Iterator<Item = &mut I> {
         self.actions.iter_mut().filter_map(|act| {
             if let PlotAction::AddItem(item) = act {
@@ -382,7 +391,7 @@ impl<I> ActionQueue<I> {
     }
 
     #[inline]
-    pub fn zoom(&mut self, zoom_factor: Vec2, center: PlotPoint) {
+    pub fn zoom(&mut self, zoom_factor: egui::Vec2, center: PlotPoint) {
         self.push(PlotAction::Zoom(zoom_factor, center));
     }
 }
