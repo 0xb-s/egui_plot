@@ -1008,21 +1008,24 @@ impl<'a> Plot<'a> {
         // Move highlighted items to front.
         items.sort_by_key(|it| it.highlighted());
 
-        // Linked cursors
+        // Find the cursors from other plots we need to draw
         let draw_cursors: Vec<Cursor> = if let Some((id, _)) = linked_cursors.as_ref() {
             ui.data_mut(|data| {
                 let frames: &mut CursorLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 let cursors = frames.0.entry(*id).or_default();
-
+                // Look for our previous frame
                 if let Some(index) = cursors
                     .iter()
                     .enumerate()
                     .find(|(_, frame)| frame.id == plot_id)
+                    // Remove our previous frame and all older frames as these are no longer displayed. This avoids
+                    // unbounded growth, as we add an entry each time we draw a plot.
                     .map(|(i, _)| i)
                 {
                     cursors.drain(0..=index);
                 }
-
+                // Gather all cursors of the remaining frames. This will be all the cursors of the
+                // other plots in the group. We want to draw these in the current plot too.
                 cursors
                     .iter()
                     .flat_map(|frame| frame.cursors.iter().copied())
