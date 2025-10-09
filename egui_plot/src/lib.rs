@@ -9,18 +9,17 @@
 //!
 #![allow(deprecated)]
 mod axis;
+mod collect_events;
 mod items;
 mod legend;
 mod memory;
-// mod plot_actions;
-mod collect_events;
 mod plot_ui;
 mod transform;
 use std::{cmp::Ordering, ops::RangeInclusive, sync::Arc};
 mod action;
 pub use crate::action::PlotEvent;
 pub use crate::action::{ActionExecutor, ActionQueue};
-pub use crate::action::{ChangeCause, InputInfo, PinSnapshot};
+pub use crate::action::{BoundsChangeCause, InputInfo, PinSnapshot};
 use ahash::HashMap;
 use egui::{
     Align2, Color32, CursorIcon, Id, Layout, NumExt as _, PointerButton, Pos2, Rangef, Rect,
@@ -136,6 +135,9 @@ pub struct PlotResponse<R> {
     /// A plot item can be hovered either by hovering its representation in the plot (line, marker, etc.)
     /// or by hovering the item in the legend.
     pub hovered_plot_item: Option<Id>,
+
+    /// All interaction events produced this frame
+    /// empty when no events occurred.
     pub events: Vec<PlotEvent>,
 }
 
@@ -863,7 +865,7 @@ impl<'a> Plot<'a> {
 
             vec2(width, height)
         };
-
+        // Determine complete rect of widget.
         let complete_rect = Rect {
             min: pos,
             max: pos + size,
@@ -911,7 +913,7 @@ impl<'a> Plot<'a> {
             })
             .collect::<Vec<_>>();
 
-        // Memory
+        // Load or initialize the memory.
         ui.ctx().check_for_id_clash(plot_id, plot_rect, "Plot");
         let mut mem = if reset {
             if let Some((name, _)) = linked_axes.as_ref() {
@@ -935,7 +937,7 @@ impl<'a> Plot<'a> {
         });
 
         let last_plot_transform = mem.transform;
-
+        // Call the plot build function.
         let mut plot_ui = PlotUi {
             ctx: ui.ctx().clone(),
             actions: ActionQueue::new(),
@@ -984,7 +986,7 @@ impl<'a> Plot<'a> {
 
         // IMPORTANT: create events ONCE here and keep pushing into it
         let mut events = applied.events;
-        let mut last_user_cause: Option<ChangeCause> = None;
+        let mut last_user_cause: Option<BoundsChangeCause> = None;
 
         // Legend filtering/highlighting
         let legend = legend_config
@@ -994,16 +996,16 @@ impl<'a> Plot<'a> {
             show_x = false;
             show_y = false;
         }
-
+        // Remove the deselected items.
         items.retain(|it| !mem.hidden_items.contains(&it.id()));
-
+        // Highlight the hovered items.
         if let Some(item_id) = &mem.hovered_legend_item {
             items
                 .iter_mut()
                 .filter(|entry| &entry.id() == item_id)
                 .for_each(|entry| entry.highlight());
         }
-
+        // Move highlighted items to front.
         items.sort_by_key(|it| it.highlighted());
 
         // Linked cursors
@@ -1029,8 +1031,7 @@ impl<'a> Plot<'a> {
         } else {
             Vec::new()
         };
-
-        // Linked bounds
+        // Transfer the bounds from a link group.
         if let Some((id, axes)) = linked_axes.as_ref() {
             ui.data_mut(|data| {
                 let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
@@ -1057,7 +1058,7 @@ impl<'a> Plot<'a> {
                     modifiers: ui.input(|i| i.modifiers),
                 },
             });
-            last_user_cause = Some(ChangeCause::Reset);
+            last_user_cause = Some(BoundsChangeCause::Reset);
         }
 
         if mem.auto_bounds.x {
@@ -1087,7 +1088,7 @@ impl<'a> Plot<'a> {
                 bounds.add_relative_margin_y(margin_fraction);
             }
             events.push(PlotEvent::AutoFitApplied { new: bounds });
-            last_user_cause.get_or_insert(ChangeCause::AutoFit);
+            last_user_cause.get_or_insert(BoundsChangeCause::AutoFit);
         }
 
         // Build transform
@@ -1145,7 +1146,7 @@ impl<'a> Plot<'a> {
             mem.transform
                 .translate_bounds((delta.x as f64, delta.y as f64));
             mem.auto_bounds = mem.auto_bounds.and(!allow_drag);
-            last_user_cause = Some(ChangeCause::Pan);
+            last_user_cause = Some(BoundsChangeCause::Pan);
 
             if response.drag_stopped() {
                 events.push(PlotEvent::PanFinished {
@@ -1210,9 +1211,9 @@ impl<'a> Plot<'a> {
                             });
 
                             last_user_cause = Some(if d == 0 {
-                                ChangeCause::AxisZoomX
+                                BoundsChangeCause::AxisZoomX
                             } else {
-                                ChangeCause::AxisZoomY
+                                BoundsChangeCause::AxisZoomY
                             });
 
                             if axis_resp.drag_stopped() {
@@ -1233,7 +1234,11 @@ impl<'a> Plot<'a> {
         // Boxed zoom
         let mut boxed_zoom_rect = None;
         if allow_boxed_zoom {
+            // Save last click to allow boxed zooming
+
             if response.drag_started() && response.dragged_by(boxed_zoom_pointer_button) {
+                // it would be best for egui that input has a memory of the last click pos because it's a common pattern
+
                 mem.last_click_pos_for_zoom = response.hover_pos();
                 events.push(PlotEvent::BoxZoomStarted {
                     screen_start: mem.last_click_pos_for_zoom.unwrap_or(plot_rect.center()),
@@ -1246,6 +1251,8 @@ impl<'a> Plot<'a> {
             }
             let (start, end) = (mem.last_click_pos_for_zoom, response.hover_pos());
             if let (Some(s), Some(e)) = (start, end) {
+                // while dragging prepare a Shape and draw it later on top of the plot
+
                 if response.dragged_by(boxed_zoom_pointer_button) {
                     response = response.on_hover_cursor(CursorIcon::ZoomIn);
                     let rect = epaint::Rect::from_two_pos(s, e);
@@ -1255,15 +1262,16 @@ impl<'a> Plot<'a> {
                             0.0,
                             epaint::Stroke::new(4., Color32::DARK_BLUE),
                             egui::StrokeKind::Middle,
-                        ),
+                        ), // Outer stroke
                         epaint::RectShape::stroke(
                             rect,
                             0.0,
                             epaint::Stroke::new(2., Color32::WHITE),
                             egui::StrokeKind::Middle,
-                        ),
+                        ), // Inner stroke
                     ));
                 }
+                // when the click is release perform the zoom
                 if response.drag_stopped() {
                     let s_val = mem.transform.value_from_position(s);
                     let e_val = mem.transform.value_from_position(e);
@@ -1285,14 +1293,17 @@ impl<'a> Plot<'a> {
                                 modifiers: ui.input(|i| i.modifiers),
                             },
                         });
-                        last_user_cause = Some(ChangeCause::BoxZoom);
+                        last_user_cause = Some(BoundsChangeCause::BoxZoom);
                     }
+                    // reset the boxed zoom state
                     mem.last_click_pos_for_zoom = None;
                 }
             }
         }
 
-        // Wheel zoom + scroll
+        // Note: we catch zoom/pan if the response contains the pointer, even if it isn't hovered.
+        // For instance: The user is painting another interactive widget on top of the plot
+        // but they still want to be able to pan/zoom the plot.
         if let (true, Some(hover_pos)) = (
             response.contains_pointer(),
             ui.input(|i| i.pointer.hover_pos()),
@@ -1322,7 +1333,7 @@ impl<'a> Plot<'a> {
                             modifiers: ui.input(|i| i.modifiers),
                         },
                     });
-                    last_user_cause = Some(ChangeCause::Zoom);
+                    last_user_cause = Some(BoundsChangeCause::Zoom);
                     mem.auto_bounds = mem.auto_bounds.and(!allow_zoom);
                 }
             }
@@ -1342,7 +1353,9 @@ impl<'a> Plot<'a> {
                 }
             }
         }
+        // --- transform initialized
 
+        // Add legend widgets to plot
         let bounds_now = mem.transform.bounds();
         let x_axis_range = bounds_now.range_x();
         let x_steps = Arc::new({
@@ -1375,7 +1388,7 @@ impl<'a> Plot<'a> {
             let (_response, thickness) = widget.ui(ui, Axis::Y);
             mem.y_axis_thickness.insert(i, thickness);
         }
-
+        // Initialize values from functions.
         for item in &mut items {
             item.initialize(mem.transform.bounds().range_x());
         }
@@ -1435,6 +1448,7 @@ impl<'a> Plot<'a> {
 
         // Share linked cursors
         if let Some((id, _)) = linked_cursors.as_ref() {
+            // Push the frame we just drew to the list of frames
             ui.data_mut(|data| {
                 let frames: &mut CursorLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 let cursors = frames.0.entry(*id).or_default();
@@ -1446,6 +1460,8 @@ impl<'a> Plot<'a> {
         }
 
         if let Some((id, _)) = linked_axes.as_ref() {
+            // Save the linked bounds.
+
             ui.data_mut(|data| {
                 let link_groups: &mut BoundsLinkGroups = data.get_temp_mut_or_default(Id::NULL);
                 link_groups.0.insert(
@@ -1526,7 +1542,7 @@ impl<'a> Plot<'a> {
             events.push(PlotEvent::BoundsChanged {
                 old: old_bounds,
                 new: new_bounds,
-                cause: last_user_cause.unwrap_or(ChangeCause::Programmatic),
+                cause: last_user_cause.unwrap_or(BoundsChangeCause::Programmatic),
             });
         }
 
