@@ -2,7 +2,7 @@ use egui::{Response, Shape, Vec2b};
 
 use crate::{
     ActionExecutor, ActionQueue, PlotBounds, PlotEvent,
-    action::{AppliedActions, BoundsLike, ChangeCause, PlotAction},
+    action::{AppliedActions, BoundsChangeCause, BoundsLike, PlotAction},
 };
 
 impl ActionExecutor {
@@ -60,7 +60,6 @@ impl ActionExecutor {
         }
     }
 }
-// action.rs
 
 impl<I> PlotAction<I> {
     /// Turn action to events.
@@ -72,7 +71,7 @@ impl<I> PlotAction<I> {
                     min: [*range.start(), f64::NEG_INFINITY],
                     max: [*range.end(), f64::INFINITY],
                 },
-                cause: ChangeCause::Programmatic,
+                cause: BoundsChangeCause::Programmatic,
             }),
 
             Self::SetBoundsY(range) => Some(PlotEvent::BoundsChanged {
@@ -81,7 +80,7 @@ impl<I> PlotAction<I> {
                     min: [f64::NEG_INFINITY, *range.start()],
                     max: [f64::INFINITY, *range.end()],
                 },
-                cause: ChangeCause::Programmatic,
+                cause: BoundsChangeCause::Programmatic,
             }),
 
             Self::Translate(_)
