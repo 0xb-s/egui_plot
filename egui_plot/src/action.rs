@@ -257,33 +257,6 @@ pub enum PlotAction<I> {
     /// Add an overlay `Shape` to be painted after items.
     AddOverlayShape(Shape),
 }
-impl<I> PlotAction<I> {
-    pub fn into_event(self) -> Option<PlotEvent> {
-        match self {
-            Self::SetBoundsX(range) => Some(PlotEvent::BoundsChanged {
-                old: PlotBounds::NOTHING,
-                new: PlotBounds {
-                    min: [*range.start(), f64::NEG_INFINITY],
-                    max: [*range.end(), f64::INFINITY],
-                },
-                cause: BoundsChangeCause::Programmatic,
-            }),
-            Self::SetBoundsY(range) => Some(PlotEvent::BoundsChanged {
-                old: PlotBounds::NOTHING,
-                new: PlotBounds {
-                    min: [f64::NEG_INFINITY, *range.start()],
-                    max: [f64::INFINITY, *range.end()],
-                },
-                cause: BoundsChangeCause::Programmatic,
-            }),
-            Self::Translate(_)
-            | Self::Zoom(_, _)
-            | Self::SetAutoBounds(_)
-            | Self::AddOverlayShape(_)
-            | Self::AddItem(_) => None,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct ActionQueue<I> {
