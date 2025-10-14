@@ -1,7 +1,7 @@
 //! Contains items that can be added to a plot.
 #![allow(clippy::type_complexity)] // TODO(emilk): simplify some of the callback types with type aliases
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{borrow::Cow, ops::RangeInclusive, sync::Arc};
 
 use egui::{
     Align2, Color32, CornerRadius, Id, ImageOptions, Mesh, NumExt as _, PopupAnchor, Pos2, Rect,
@@ -11,10 +11,10 @@ use egui::{
     pos2, vec2,
 };
 
-use emath::Float as _;
-use rect_elem::{RectElement, highlighted_color};
-
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
+pub use crate::items::columnar_series::ColumnarSeriesExt;
+use crate::items::columnar_series::SegmentedSeries;
+pub use crate::items::columnar_series::Segments;
 pub use crate::items::tooltip::HitPoint;
 pub use crate::items::tooltip::PinnedPoints;
 pub use crate::items::tooltip::TooltipOptions;
@@ -22,18 +22,23 @@ pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
 pub use columnar_series::ColumnarSeries;
+use emath::Float as _;
+use rect_elem::{RectElement, highlighted_color};
+pub use scatter::Marker;
+pub use scatter::Scatter;
+pub use scatter::ScatterEncodings;
 pub use values::{
     ClosestElem, LineStyle, MarkerShape, Orientation, PlotGeometry, PlotPoint, PlotPoints,
 };
-
 mod band;
 mod bar;
 mod box_elem;
 mod columnar_series;
+pub(crate) mod geom_helpers;
 mod rect_elem;
+mod scatter;
 mod tooltip;
 mod values;
-
 const DEFAULT_FILL_ALPHA: f32 = 0.05;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -433,6 +438,9 @@ pub struct Line<'a> {
     pub(super) gradient_color: Option<Arc<dyn Fn(PlotPoint) -> Color32 + Send + Sync>>,
     pub(super) gradient_fill: bool,
     pub(super) style: LineStyle,
+    // segmentation
+    pub(super) blocks: Option<Cow<'a, [core::ops::Range<usize>]>>, // explicit segments
+    pub(super) segment_on_gaps: bool,
 }
 impl<'a> Line<'a> {
     #[inline]
@@ -451,11 +459,36 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
+            blocks: None,
+            segment_on_gaps: false,
         }
     }
 }
 
 impl<'a> Line<'a> {
+    #[inline]
+    pub fn new_xy_blocks(
+        name: impl Into<String>,
+        xs: &'a [f64],
+        ys: &'a [f64],
+        blocks: &'a [core::ops::Range<usize>],
+    ) -> Self {
+        Self::from_series(name, ColumnarSeries::new(xs, ys)).with_blocks(blocks)
+    }
+
+    /// explicit segment ranges.
+    #[inline]
+    pub fn with_blocks(mut self, blocks: impl Into<Cow<'a, [core::ops::Range<usize>]>>) -> Self {
+        self.blocks = Some(blocks.into());
+        self
+    }
+
+    /// Split into segments automatically wherever xs/ys contain non-finite values.
+    #[inline]
+    pub fn segment_on_gaps(mut self, yes: bool) -> Self {
+        self.segment_on_gaps = yes;
+        self
+    }
     pub fn new(name: impl Into<String>, series: impl Into<PlotPoints<'a>>) -> Self {
         Self {
             base: PlotItemBase::new(name.into()),
@@ -467,6 +500,8 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
+            blocks: None,
+            segment_on_gaps: false,
         }
     }
 
@@ -547,8 +582,12 @@ impl PlotItem for Line<'_> {
             series,
             stroke,
             fill,
+            fill_alpha: self_fill_alpha,
+
             gradient_fill,
             style,
+            blocks,
+            segment_on_gaps,
             ..
         } = self;
 
@@ -596,6 +635,7 @@ impl PlotItem for Line<'_> {
         if len < 1 {
             return; // nothing to draw
         }
+
         //todo try to move this to helper
         //outside of this function
         let get_pos = |i: usize| -> Pos2 {
@@ -612,73 +652,109 @@ impl PlotItem for Line<'_> {
         if len < 2 {
             fill = None;
         }
-        if let Some(y_reference) = fill {
-            let mut fill_alpha = self.fill_alpha;
-            if base.highlight {
-                fill_alpha = (2.0 * fill_alpha).at_most(1.0);
-            }
-            let y_line = transform
-                .position_from_point(&PlotPoint::new(0.0, y_reference))
-                .y;
 
-            let mut fill_color: Color32 = Rgba::from(stroke.color)
-                .to_opaque()
-                .multiply(fill_alpha)
-                .into();
+        let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
 
-            let mut mesh = Mesh::default();
-            let expected_intersections = 20;
-            mesh.reserve_triangles(len.saturating_sub(1) * 2);
-            mesh.reserve_vertices(len * 2 + expected_intersections);
-
-            let mut p0 = get_pos(0);
-            for i in 0..(len - 1) {
-                let p1 = get_pos(i + 1);
-
-                if *gradient_fill {
-                    if let Some(grad) = self.gradient_color.as_ref() {
-                        fill_color = Rgba::from(grad(transform.value_from_position(p1)))
-                            .to_opaque()
-                            .multiply(fill_alpha)
-                            .into();
-                    }
+        if let Some(user_blocks) = blocks {
+            for r in user_blocks.as_ref() {
+                let start = r.start.min(len);
+                let end = r.end.min(len);
+                if start < end {
+                    runs.push(start..end);
                 }
-
-                let base_idx = mesh.vertices.len() as u32;
-                mesh.colored_vertex(p0, fill_color);
-                mesh.colored_vertex(pos2(p0.x, y_line), fill_color);
-
-                if let Some(xi) = y_intersection(&p0, &p1, y_line) {
-                    let xp = pos2(xi, y_line);
-                    mesh.colored_vertex(xp, fill_color);
-                    mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
-                    mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
-                    mesh.colored_vertex(p1, fill_color);
-                    mesh.add_triangle(base_idx + 2, base_idx + 3, base_idx + 4);
-                } else {
-                    mesh.colored_vertex(p1, fill_color);
-                    mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
-                    mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
-                    mesh.add_triangle(base_idx + 1, base_idx + 2, base_idx + 3);
-                }
-
-                p0 = p1;
             }
-
-            let last = get_pos(len - 1);
-            mesh.colored_vertex(last, fill_color);
-            mesh.colored_vertex(pos2(last.x, y_line), fill_color);
-
-            shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
+        } else if *segment_on_gaps {
+            if let Src::Col { xs, ys } = src {
+                let base = ColumnarSeries::new_truncating(xs, ys);
+                let seg = SegmentedSeries {
+                    base,
+                    segments: None,
+                    valid: None,
+                };
+                runs.extend(seg.iter_runs());
+            } else {
+                runs.push(0..len);
+            }
+        } else {
+            runs.push(0..len);
+        }
+        if runs.is_empty() {
+            return;
         }
 
-        let draw_stroke = final_stroke.width > 0.0
-            && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
-        if draw_stroke {
-            let mut scratch: Vec<Pos2> = Vec::new();
-            let iter = (0..len).map(get_pos);
+        for r in runs {
+            let seg_len = r.end.saturating_sub(r.start);
 
-            style.style_line_iter(iter, final_stroke, base.highlight, shapes, &mut scratch);
+            if seg_len >= 2 {
+                if let Some(y_reference) = fill {
+                    let mut fill_alpha = *self_fill_alpha;
+                    if base.highlight {
+                        fill_alpha = (2.0 * fill_alpha).at_most(1.0);
+                    }
+                    let y_line = transform
+                        .position_from_point(&PlotPoint::new(0.0, y_reference))
+                        .y;
+
+                    let mut fill_color: Color32 = Rgba::from(stroke.color)
+                        .to_opaque()
+                        .multiply(fill_alpha)
+                        .into();
+
+                    let mut mesh = Mesh::default();
+                    let expected_intersections = 20;
+                    mesh.reserve_triangles(seg_len.saturating_sub(1) * 2);
+                    mesh.reserve_vertices(seg_len * 2 + expected_intersections);
+
+                    let mut p0 = get_pos(r.start);
+                    for i in r.start..(r.end - 1) {
+                        let p1 = get_pos(i + 1);
+
+                        if *gradient_fill {
+                            if let Some(grad) = self.gradient_color.as_ref() {
+                                fill_color = Rgba::from(grad(transform.value_from_position(p1)))
+                                    .to_opaque()
+                                    .multiply(fill_alpha)
+                                    .into();
+                            }
+                        }
+
+                        let base_idx = mesh.vertices.len() as u32;
+                        mesh.colored_vertex(p0, fill_color);
+                        mesh.colored_vertex(pos2(p0.x, y_line), fill_color);
+
+                        if let Some(xi) = y_intersection(&p0, &p1, y_line) {
+                            let xp = pos2(xi, y_line);
+                            mesh.colored_vertex(xp, fill_color);
+                            mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                            mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                            mesh.colored_vertex(p1, fill_color);
+                            mesh.add_triangle(base_idx + 2, base_idx + 3, base_idx + 4);
+                        } else {
+                            mesh.colored_vertex(p1, fill_color);
+                            mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                            mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                            mesh.add_triangle(base_idx + 1, base_idx + 2, base_idx + 3);
+                        }
+
+                        p0 = p1;
+                    }
+
+                    let last = get_pos(r.end - 1);
+                    mesh.colored_vertex(last, fill_color);
+                    mesh.colored_vertex(pos2(last.x, y_line), fill_color);
+
+                    shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
+                }
+            }
+
+            let stroke_for_run = final_stroke.clone();
+            let draw_stroke = stroke_for_run.width > 0.0
+                && stroke_for_run.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+            if draw_stroke {
+                let mut scratch: Vec<Pos2> = Vec::new();
+                let iter = r.map(get_pos);
+                style.style_line_iter(iter, stroke_for_run, base.highlight, shapes, &mut scratch);
+            }
         }
     }
 
@@ -1125,6 +1201,10 @@ impl PlotItem for Points<'_> {
                         shapes.push(Shape::line_segment(vertical, default_stroke));
                         shapes.push(Shape::line_segment(diagonal1, default_stroke));
                         shapes.push(Shape::line_segment(diagonal2, default_stroke));
+                    }
+                    #[allow(clippy::unimplemented)]
+                    _ => {
+                        unimplemented!()
                     }
                 }
             });
