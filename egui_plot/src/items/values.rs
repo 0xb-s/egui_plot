@@ -438,6 +438,7 @@ impl<'a> PlotPoints<'a> {
 // ----------------------------------------------------------------------------
 
 /// Circle, Diamond, Square, Cross, …
+/// see `<https://matplotlib.org/stable/api/markers_api.html>` for reference
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MarkerShape {
     Circle,
@@ -450,6 +451,30 @@ pub enum MarkerShape {
     Left,
     Right,
     Asterisk,
+
+    Point,       // "." tiny dot
+    Pixel,       // "," 1px-ish
+    PlusFilled,  // "P"
+    XFilled,     // "X"
+    ThinDiamond, // "d"
+
+    Pentagon, // "p"
+    Hexagon1, // "h"
+    Hexagon2, // "H"
+    Octagon,  // "8"
+
+    VLine, // "|"
+    HLine, // "_"
+
+    RegularPolygon {
+        n: u8,
+        angle_deg: i16,
+    },
+    StarPolygon {
+        n: u8,
+        inner_r_ppm: u16,
+        angle_deg: i16,
+    },
 }
 
 impl MarkerShape {
