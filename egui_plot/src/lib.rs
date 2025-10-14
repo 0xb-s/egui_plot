@@ -32,10 +32,11 @@ use emath::Float as _;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
-        Arrows, Band, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, HLine, HitPoint,
-        Line, LineStyle, MarkerShape, Orientation, PinnedPoints, PlotConfig, PlotGeometry,
-        PlotImage, PlotItem, PlotItemBase, PlotPoint, PlotPoints, Points, Polygon, Text,
-        TooltipOptions, VLine,
+        Arrows, Band, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, ColumnarSeries,
+        ColumnarSeriesExt, HLine, HitPoint, Line, LineStyle, Marker, MarkerShape, Orientation,
+        PinnedPoints, PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase, PlotPoint,
+        PlotPoints, Points, Polygon, Scatter, ScatterEncodings, Segments, Text, TooltipOptions,
+        VLine,
     },
     legend::{ColorConflictHandling, Corner, Legend},
     memory::PlotMemory,
