@@ -33,10 +33,9 @@ pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
         Arrows, Band, Bar, BarChart, BoxElem, BoxPlot, BoxSpread, ClosestElem, ColumnarSeries,
-        ColumnarSeriesExt, HLine, HitPoint, Line, LineStyle, Marker, MarkerShape, Orientation,
-        PinnedPoints, PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase, PlotPoint,
-        PlotPoints, Points, Polygon, Scatter, ScatterEncodings, Segments, Text, TooltipOptions,
-        VLine,
+        HLine, HitPoint, Line, LineStyle, Marker, MarkerShape, Orientation, PinnedPoints,
+        PlotConfig, PlotGeometry, PlotImage, PlotItem, PlotItemBase, PlotPoint, PlotPoints, Points,
+        Polygon, Scatter, ScatterEncodings, Text, TooltipOptions, VLine,
     },
     legend::{ColorConflictHandling, Corner, Legend},
     memory::PlotMemory,
