@@ -1,7 +1,7 @@
 //! Contains items that can be added to a plot.
 #![allow(clippy::type_complexity)] // TODO(emilk): simplify some of the callback types with type aliases
 
-use std::{borrow::Cow, ops::RangeInclusive, sync::Arc};
+use std::{ops::RangeInclusive, sync::Arc};
 
 use egui::{
     Align2, Color32, CornerRadius, Id, ImageOptions, Mesh, NumExt as _, PopupAnchor, Pos2, Rect,
@@ -12,9 +12,7 @@ use egui::{
 };
 
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
-pub use crate::items::columnar_series::ColumnarSeriesExt;
-use crate::items::columnar_series::SegmentedSeries;
-pub use crate::items::columnar_series::Segments;
+
 pub use crate::items::tooltip::HitPoint;
 pub use crate::items::tooltip::PinnedPoints;
 pub use crate::items::tooltip::TooltipOptions;
@@ -177,6 +175,33 @@ pub trait PlotItem {
                     })
                     .min_by_key(|e| e.dist_sq.ord())
             }
+
+            PlotGeometry::BlocksXY {
+                xs_blocks,
+                ys_blocks,
+            } => {
+                let mut best: Option<ClosestElem> = None;
+                let mut flat = 0usize; // flatten (block,i) → single index
+                let nb = xs_blocks.len().min(ys_blocks.len());
+                for b in 0..nb {
+                    let xs = xs_blocks[b];
+                    let ys = ys_blocks[b];
+                    let n = xs.len().min(ys.len());
+                    for i in 0..n {
+                        let p = PlotPoint { x: xs[i], y: ys[i] };
+                        let pos = transform.position_from_point(&p);
+                        let d = point.distance_sq(pos);
+                        if best.as_ref().is_none_or(|e| d < e.dist_sq) {
+                            best = Some(ClosestElem {
+                                index: flat,
+                                dist_sq: d,
+                            });
+                        }
+                        flat += 1;
+                    }
+                }
+                best
+            }
         }
     }
 
@@ -193,6 +218,33 @@ pub trait PlotItem {
             PlotGeometry::Points(points) => points,
             PlotGeometry::None => {
                 panic!("If the PlotItem has no geometry, on_hover() must not be called")
+            }
+            PlotGeometry::BlocksXY {
+                xs_blocks,
+                ys_blocks,
+            } => {
+                // map flat index → (block, i)
+                let mut idx = elem.index;
+                let mut value = PlotPoint {
+                    x: f64::NAN,
+                    y: f64::NAN,
+                };
+                let nb = xs_blocks.len().min(ys_blocks.len());
+                for b in 0..nb {
+                    let xs = xs_blocks[b];
+                    let ys = ys_blocks[b];
+                    let n = xs.len().min(ys.len());
+                    if idx < n {
+                        value = PlotPoint {
+                            x: xs[idx],
+                            y: ys[idx],
+                        };
+                        break;
+                    } else {
+                        idx -= n;
+                    }
+                }
+                &[value]
             }
             PlotGeometry::PointsXY { xs, ys } => {
                 let x = xs[elem.index];
@@ -426,6 +478,10 @@ impl PlotItem for VLine {
     }
 }
 
+pub struct LineBlocks<'a> {
+    pub xs: Vec<&'a [f64]>,
+    pub ys: Vec<&'a [f64]>,
+}
 /// A series of values forming a path.
 pub struct Line<'a> {
     base: PlotItemBase,
@@ -439,8 +495,7 @@ pub struct Line<'a> {
     pub(super) gradient_fill: bool,
     pub(super) style: LineStyle,
     // segmentation
-    pub(super) blocks: Option<Cow<'a, [core::ops::Range<usize>]>>, // explicit segments
-    pub(super) segment_on_gaps: bool,
+    pub(super) blocks_xy: Option<LineBlocks<'a>>,
 }
 impl<'a> Line<'a> {
     #[inline]
@@ -459,8 +514,7 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
-            blocks: None,
-            segment_on_gaps: false,
+            blocks_xy: None,
         }
     }
 }
@@ -469,25 +523,29 @@ impl<'a> Line<'a> {
     #[inline]
     pub fn new_xy_blocks(
         name: impl Into<String>,
-        xs: &'a [f64],
-        ys: &'a [f64],
-        blocks: &'a [core::ops::Range<usize>],
+        xs_blocks: Vec<&'a [f64]>,
+        ys_blocks: Vec<&'a [f64]>,
     ) -> Self {
-        Self::from_series(name, ColumnarSeries::new(xs, ys)).with_blocks(blocks)
-    }
+        assert_eq!(xs_blocks.len(), ys_blocks.len(), "blocks count mismatch");
+        for (i, (&xs, &ys)) in xs_blocks.iter().zip(&ys_blocks).enumerate() {
+            assert_eq!(xs.len(), ys.len(), "block #{i} lengths don't match");
+        }
 
-    /// explicit segment ranges.
-    #[inline]
-    pub fn with_blocks(mut self, blocks: impl Into<Cow<'a, [core::ops::Range<usize>]>>) -> Self {
-        self.blocks = Some(blocks.into());
-        self
-    }
-
-    /// Split into segments automatically wherever xs/ys contain non-finite values.
-    #[inline]
-    pub fn segment_on_gaps(mut self, yes: bool) -> Self {
-        self.segment_on_gaps = yes;
-        self
+        Self {
+            base: PlotItemBase::new(name.into()),
+            columnar: None,
+            series: None,
+            stroke: Stroke::new(1.5, Color32::TRANSPARENT),
+            fill: None,
+            fill_alpha: DEFAULT_FILL_ALPHA,
+            gradient_color: None,
+            gradient_fill: false,
+            style: LineStyle::Solid,
+            blocks_xy: Some(LineBlocks {
+                xs: xs_blocks,
+                ys: ys_blocks,
+            }),
+        }
     }
     pub fn new(name: impl Into<String>, series: impl Into<PlotPoints<'a>>) -> Self {
         Self {
@@ -500,8 +558,7 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
-            blocks: None,
-            segment_on_gaps: false,
+            blocks_xy: None,
         }
     }
 
@@ -575,6 +632,7 @@ fn y_intersection(p1: &Pos2, p2: &Pos2, y: f32) -> Option<f32> {
 }
 
 impl PlotItem for Line<'_> {
+    #[allow(clippy::too_many_lines)]
     fn shapes(&self, _ui: &Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
         let Self {
             base,
@@ -583,11 +641,10 @@ impl PlotItem for Line<'_> {
             stroke,
             fill,
             fill_alpha: self_fill_alpha,
-
+            gradient_color,
             gradient_fill,
             style,
-            blocks,
-            segment_on_gaps,
+            blocks_xy,
             ..
         } = self;
 
@@ -596,104 +653,36 @@ impl PlotItem for Line<'_> {
         let mut final_stroke: PathStroke = (*stroke).into();
         // if we have a gradient color, we need to wrap the stroke callback to transpose the position to a value
         // the caller can reason about
-        if let Some(gradient_callback) = self.gradient_color.clone() {
-            let local_transform = *transform;
-            let wrapped_callback = move |_rec: Rect, pos: Pos2| -> Color32 {
-                let point = local_transform.value_from_position(pos);
-                gradient_callback(point)
-            };
-            final_stroke = PathStroke::new_uv(stroke.width, wrapped_callback);
+        if let Some(callback) = gradient_color.clone() {
+            let local_tf = *transform;
+            let wrapped =
+                move |_r: Rect, p: Pos2| -> Color32 { callback(local_tf.value_from_position(p)) };
+            final_stroke = PathStroke::new_uv(stroke.width, wrapped);
         }
 
-        enum Src<'a> {
-            Col { xs: &'a [f64], ys: &'a [f64] },
-            Legacy { pts: &'a [PlotPoint] },
-            Empty,
-        }
-
-        let src = if let Some(cs) = columnar {
-            Src::Col {
-                xs: cs.xs(),
-                ys: cs.ys(),
+        if let Some(blocks) = blocks_xy {
+            if blocks.xs.is_empty() {
+                return;
             }
-        } else if let Some(s) = series {
-            let pts = s.points();
-            if pts.is_empty() {
-                Src::Empty
-            } else {
-                Src::Legacy { pts }
-            }
-        } else {
-            Src::Empty
-        };
 
-        let len = match src {
-            Src::Col { xs, ys } => xs.len().min(ys.len()),
-            Src::Legacy { pts } => pts.len(),
-            Src::Empty => 0,
-        };
-        if len < 1 {
-            return; // nothing to draw
-        }
+            let mut draw_one_block = |xs: &[f64], ys: &[f64]| {
+                let len = xs.len().min(ys.len());
+                if len == 0 {
+                    return;
+                }
 
-        //todo try to move this to helper
-        //outside of this function
-        let get_pos = |i: usize| -> Pos2 {
-            match src {
-                Src::Col { xs, ys } => {
+                let get_pos = |i: usize| {
                     let v = PlotPoint { x: xs[i], y: ys[i] };
                     transform.position_from_point(&v)
-                }
-                Src::Legacy { pts } => transform.position_from_point(&pts[i]),
-                Src::Empty => unreachable!(),
-            }
-        };
-
-        if len < 2 {
-            fill = None;
-        }
-
-        let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
-
-        if let Some(user_blocks) = blocks {
-            for r in user_blocks.as_ref() {
-                let start = r.start.min(len);
-                let end = r.end.min(len);
-                if start < end {
-                    runs.push(start..end);
-                }
-            }
-        } else if *segment_on_gaps {
-            if let Src::Col { xs, ys } = src {
-                let base = ColumnarSeries::new_truncating(xs, ys);
-                let seg = SegmentedSeries {
-                    base,
-                    segments: None,
-                    valid: None,
                 };
-                runs.extend(seg.iter_runs());
-            } else {
-                runs.push(0..len);
-            }
-        } else {
-            runs.push(0..len);
-        }
-        if runs.is_empty() {
-            return;
-        }
 
-        for r in runs {
-            let seg_len = r.end.saturating_sub(r.start);
-
-            if seg_len >= 2 {
-                if let Some(y_reference) = fill {
+                if len < 2 {
+                } else if let Some(y_ref) = fill {
                     let mut fill_alpha = *self_fill_alpha;
                     if base.highlight {
                         fill_alpha = (2.0 * fill_alpha).at_most(1.0);
                     }
-                    let y_line = transform
-                        .position_from_point(&PlotPoint::new(0.0, y_reference))
-                        .y;
+                    let y_line = transform.position_from_point(&PlotPoint::new(0.0, y_ref)).y;
 
                     let mut fill_color: Color32 = Rgba::from(stroke.color)
                         .to_opaque()
@@ -702,15 +691,15 @@ impl PlotItem for Line<'_> {
 
                     let mut mesh = Mesh::default();
                     let expected_intersections = 20;
-                    mesh.reserve_triangles(seg_len.saturating_sub(1) * 2);
-                    mesh.reserve_vertices(seg_len * 2 + expected_intersections);
+                    mesh.reserve_triangles(len.saturating_sub(1) * 2);
+                    mesh.reserve_vertices(len * 2 + expected_intersections);
 
-                    let mut p0 = get_pos(r.start);
-                    for i in r.start..(r.end - 1) {
+                    let mut p0 = get_pos(0);
+                    for i in 0..(len - 1) {
                         let p1 = get_pos(i + 1);
 
                         if *gradient_fill {
-                            if let Some(grad) = self.gradient_color.as_ref() {
+                            if let Some(grad) = gradient_color.as_ref() {
                                 fill_color = Rgba::from(grad(transform.value_from_position(p1)))
                                     .to_opaque()
                                     .multiply(fill_alpha)
@@ -739,22 +728,150 @@ impl PlotItem for Line<'_> {
                         p0 = p1;
                     }
 
-                    let last = get_pos(r.end - 1);
+                    let last = get_pos(len - 1);
                     mesh.colored_vertex(last, fill_color);
                     mesh.colored_vertex(pos2(last.x, y_line), fill_color);
 
                     shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
                 }
+
+                let draw_stroke = final_stroke.width > 0.0
+                    && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+                if draw_stroke {
+                    let mut scratch: Vec<Pos2> = Vec::new();
+                    style.style_line_iter(
+                        (0..len).map(get_pos),
+                        final_stroke.clone(),
+                        base.highlight,
+                        shapes,
+                        &mut scratch,
+                    );
+                }
+            };
+
+            for (xs, ys) in blocks.xs.iter().zip(&blocks.ys) {
+                draw_one_block(xs, ys);
+            }
+            return;
+        }
+
+        enum Src<'a> {
+            Col { xs: &'a [f64], ys: &'a [f64] },
+            Legacy { pts: &'a [PlotPoint] },
+            Empty,
+        }
+        let src = if let Some(cs) = columnar {
+            Src::Col {
+                xs: cs.xs(),
+                ys: cs.ys(),
+            }
+        } else if let Some(s) = series {
+            let pts = s.points();
+            if pts.is_empty() {
+                Src::Empty
+            } else {
+                Src::Legacy { pts }
+            }
+        } else {
+            Src::Empty
+        };
+
+        let len = match src {
+            Src::Col { xs, ys } => xs.len().min(ys.len()),
+            Src::Legacy { pts } => pts.len(),
+            Src::Empty => 0,
+        };
+        if len < 1 {
+            return; // nothing to draw
+        }
+        //todo try to move this to helper
+        //outside of this function
+        let get_pos = |i: usize| -> Pos2 {
+            match src {
+                Src::Col { xs, ys } => {
+                    let v = PlotPoint { x: xs[i], y: ys[i] };
+                    transform.position_from_point(&v)
+                }
+                Src::Legacy { pts } => transform.position_from_point(&pts[i]),
+                Src::Empty => unreachable!(),
+            }
+        };
+
+        if len < 2 {
+            fill = None;
+        }
+
+        if let Some(y_reference) = fill {
+            let mut fill_alpha = *self_fill_alpha;
+            if base.highlight {
+                fill_alpha = (2.0 * fill_alpha).at_most(1.0);
+            }
+            let y_line = transform
+                .position_from_point(&PlotPoint::new(0.0, y_reference))
+                .y;
+
+            let mut fill_color: Color32 = Rgba::from(stroke.color)
+                .to_opaque()
+                .multiply(fill_alpha)
+                .into();
+
+            let mut mesh = Mesh::default();
+            let expected_intersections = 20;
+            mesh.reserve_triangles(len.saturating_sub(1) * 2);
+            mesh.reserve_vertices(len * 2 + expected_intersections);
+
+            let mut p0 = get_pos(0);
+            for i in 0..(len - 1) {
+                let p1 = get_pos(i + 1);
+
+                if *gradient_fill {
+                    if let Some(grad) = gradient_color.as_ref() {
+                        fill_color = Rgba::from(grad(transform.value_from_position(p1)))
+                            .to_opaque()
+                            .multiply(fill_alpha)
+                            .into();
+                    }
+                }
+
+                let base_idx = mesh.vertices.len() as u32;
+                mesh.colored_vertex(p0, fill_color);
+                mesh.colored_vertex(pos2(p0.x, y_line), fill_color);
+
+                if let Some(xi) = y_intersection(&p0, &p1, y_line) {
+                    let xp = pos2(xi, y_line);
+                    mesh.colored_vertex(xp, fill_color);
+                    mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                    mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                    mesh.colored_vertex(p1, fill_color);
+                    mesh.add_triangle(base_idx + 2, base_idx + 3, base_idx + 4);
+                } else {
+                    mesh.colored_vertex(p1, fill_color);
+                    mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                    mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                    mesh.add_triangle(base_idx + 1, base_idx + 2, base_idx + 3);
+                }
+
+                p0 = p1;
             }
 
-            let stroke_for_run = final_stroke.clone();
-            let draw_stroke = stroke_for_run.width > 0.0
-                && stroke_for_run.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
-            if draw_stroke {
-                let mut scratch: Vec<Pos2> = Vec::new();
-                let iter = r.map(get_pos);
-                style.style_line_iter(iter, stroke_for_run, base.highlight, shapes, &mut scratch);
-            }
+            let last = get_pos(len - 1);
+            mesh.colored_vertex(last, fill_color);
+            mesh.colored_vertex(pos2(last.x, y_line), fill_color);
+
+            shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
+        }
+
+        let draw_stroke = final_stroke.width > 0.0
+            && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+        if draw_stroke {
+            let mut scratch: Vec<Pos2> = Vec::new();
+            style.style_line_iter(
+                (0..len).map(get_pos),
+                final_stroke,
+                base.highlight,
+                shapes,
+                &mut scratch,
+            );
         }
     }
 
@@ -790,6 +907,18 @@ impl PlotItem for Line<'_> {
     }
 
     fn bounds(&self) -> PlotBounds {
+        if let Some(b) = &self.blocks_xy {
+            let mut out = PlotBounds::NOTHING;
+            for (xs, ys) in b.xs.iter().zip(&b.ys) {
+                let cs = ColumnarSeries::new_truncating(xs, ys);
+                let b = cs.bounds();
+                out.extend_with_x(b.min()[0]);
+                out.extend_with_x(b.max()[0]);
+                out.extend_with_y(b.min()[1]);
+                out.extend_with_y(b.max()[1]);
+            }
+            return out;
+        }
         if let Some(cs) = &self.columnar {
             cs.bounds()
         } else if let Some(series) = &self.series {
