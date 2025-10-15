@@ -516,6 +516,10 @@ pub enum PlotGeometry<'a> {
         xs: &'a [f64],
         ys: &'a [f64],
     },
+    BlocksXY {
+        xs_blocks: Vec<&'a [f64]>,
+        ys_blocks: Vec<&'a [f64]>,
+    }, // NEW
 }
 
 // ----------------------------------------------------------------------------
