@@ -175,6 +175,7 @@ impl PlotUi<'_> {
     ///
     /// The overlay (band, markers, rails) and highlighting are handled by this
     /// function; the closure only draws the *tooltip* content (table, custom UI).
+    #[allow(clippy::too_many_lines)]
     pub fn show_tooltip_across_series_with(
         &mut self,
 
@@ -270,6 +271,33 @@ impl PlotUi<'_> {
                             best_ix = Some(ix);
                             best_dx = dx;
                             best_pos = p;
+                        }
+                    }
+                }
+                PlotGeometry::BlocksXY {
+                    xs_blocks,
+                    ys_blocks,
+                } => {
+                    let nb = xs_blocks.len().min(ys_blocks.len());
+                    for b in 0..nb {
+                        let xs = xs_blocks[b];
+                        let ys = ys_blocks[b];
+                        let n = xs.len().min(ys.len());
+                        for ix in 0..n {
+                            let value = PlotPoint {
+                                x: xs[ix],
+                                y: ys[ix],
+                            };
+                            let p = transform.position_from_point(&value);
+                            if p.x < band_min_x || p.x > band_max_x {
+                                continue;
+                            }
+                            let dx = (p.x - pointer_screen.x).abs();
+                            if dx < best_dx {
+                                best_ix = Some(ix);
+                                best_dx = dx;
+                                best_pos = p;
+                            }
                         }
                     }
                 }
