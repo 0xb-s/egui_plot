@@ -32,49 +32,6 @@ impl Default for Marker {
     }
 }
 
-impl Marker {
-    #[inline]
-    pub fn with_shape(shape: MarkerShape) -> Self {
-        Self {
-            shape,
-            ..Default::default()
-        }
-    }
-    #[inline]
-    pub fn circle() -> Self {
-        Self::with_shape(MarkerShape::Circle)
-    }
-    #[inline]
-    pub fn square() -> Self {
-        Self::with_shape(MarkerShape::Square)
-    }
-    #[inline]
-    pub fn diamond() -> Self {
-        Self::with_shape(MarkerShape::Diamond)
-    }
-
-    #[inline]
-    pub fn filled(mut self, yes: bool) -> Self {
-        self.filled = yes;
-        self
-    }
-    #[inline]
-    pub fn radius(mut self, r: f32) -> Self {
-        self.radius = r;
-        self
-    }
-    #[inline]
-    pub fn color(mut self, c: Color32) -> Self {
-        self.color = Some(c);
-        self
-    }
-    #[inline]
-    pub fn stroke(mut self, s: Stroke) -> Self {
-        self.stroke = s;
-        self
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScatterEncodings<'a> {
     pub per_point_colors: Option<&'a [Color32]>,
