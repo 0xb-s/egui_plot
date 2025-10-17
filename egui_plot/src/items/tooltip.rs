@@ -220,9 +220,12 @@ impl PlotUi<'_> {
         if band_max_x <= band_min_x {
             return;
         }
+        let radius_px = options.radius_px;
 
         // Collect per-series closest point inside the band:
         let mut hits: Vec<HitPoint> = Vec::new();
+        let pointer_plot = transform.value_from_position(pointer_screen);
+        let mut best_value_pointsxy: Option<PlotPoint> = None;
 
         for item in self.actions.iter_items() {
             if !item.allow_hover() {
@@ -239,41 +242,67 @@ impl PlotUi<'_> {
             };
 
             let (mut best_ix, mut best_dx, mut best_pos) = (None, f32::INFINITY, Pos2::ZERO);
-
+            let mut best_value_blocksxy: Option<PlotPoint> = None;
             match item.geometry() {
                 PlotGeometry::Points(points) => {
                     for (ix, v) in points.iter().enumerate() {
                         let p = transform.position_from_point(v);
-                        if p.x < band_min_x || p.x > band_max_x {
-                            continue;
-                        }
                         let dx = (p.x - pointer_screen.x).abs();
-                        if dx < best_dx {
+                        if dx <= radius_px && dx < best_dx {
                             best_ix = Some(ix);
                             best_dx = dx;
                             best_pos = p;
                         }
                     }
                 }
+
                 PlotGeometry::PointsXY { xs, ys } => {
                     let n = xs.len().min(ys.len());
-                    for ix in 0..n {
-                        let value = PlotPoint {
-                            x: xs[ix],
-                            y: ys[ix],
-                        };
+                    if n == 0 {
+                        // nothing
+                    } else if n == 1 {
+                        // single point
+                        let value = PlotPoint { x: xs[0], y: ys[0] };
                         let p = transform.position_from_point(&value);
-                        if p.x < band_min_x || p.x > band_max_x {
-                            continue;
-                        }
                         let dx = (p.x - pointer_screen.x).abs();
-                        if dx < best_dx {
-                            best_ix = Some(ix);
+                        if dx <= radius_px && dx < best_dx {
+                            best_ix = Some(0);
                             best_dx = dx;
                             best_pos = p;
+                            best_value_pointsxy = Some(value);
+                        }
+                    } else {
+                        //
+                        if pointer_plot.x >= xs[0] && pointer_plot.x <= xs[n - 1] {
+                            let j = xs.partition_point(|x| *x < pointer_plot.x).clamp(1, n - 1);
+                            let i = j - 1;
+
+                            let (x0, y0) = (xs[i], ys[i]);
+                            let (x1, y1) = (xs[j], ys[j]);
+                            let t = if x1 > x0 {
+                                (pointer_plot.x - x0) / (x1 - x0)
+                            } else {
+                                0.0
+                            };
+                            let y = y0 + t * (y1 - y0);
+
+                            let value = PlotPoint {
+                                x: pointer_plot.x,
+                                y,
+                            };
+                            let py = transform.position_from_point(&value).y;
+                            let p = Pos2::new(pointer_screen.x, py);
+
+                            if best_dx > 0.0 || radius_px >= 0.0 {
+                                best_ix = Some(i);
+                                best_dx = 0.0;
+                                best_pos = p;
+                                best_value_pointsxy = Some(value);
+                            }
                         }
                     }
                 }
+
                 PlotGeometry::BlocksXY {
                     xs_blocks,
                     ys_blocks,
@@ -283,44 +312,82 @@ impl PlotUi<'_> {
                         let xs = xs_blocks[b];
                         let ys = ys_blocks[b];
                         let n = xs.len().min(ys.len());
-                        for ix in 0..n {
-                            let value = PlotPoint {
-                                x: xs[ix],
-                                y: ys[ix],
-                            };
-                            let p = transform.position_from_point(&value);
-                            if p.x < band_min_x || p.x > band_max_x {
-                                continue;
-                            }
-                            let dx = (p.x - pointer_screen.x).abs();
-                            if dx < best_dx {
-                                best_ix = Some(ix);
-                                best_dx = dx;
-                                best_pos = p;
-                            }
+                        if n < 2 {
+                            continue;
+                        }
+
+                        if pointer_plot.x < xs[0] || pointer_plot.x > xs[n - 1] {
+                            continue;
+                        }
+
+                        let j = xs.partition_point(|x| *x < pointer_plot.x).clamp(1, n - 1);
+                        let i = j - 1;
+
+                        let x0 = xs[i];
+                        let y0 = ys[i];
+                        let x1 = xs[j];
+                        let y1 = ys[j];
+                        let t = if x1 > x0 {
+                            (pointer_plot.x - x0) / (x1 - x0)
+                        } else {
+                            0.0
+                        };
+                        let y = y0 + t * (y1 - y0);
+
+                        let value = PlotPoint {
+                            x: pointer_plot.x,
+                            y,
+                        };
+
+                        let py = transform.position_from_point(&value).y;
+                        let p = Pos2::new(pointer_screen.x, py);
+
+                        let dx = 0.0;
+                        if dx <= radius_px && dx < best_dx {
+                            best_ix = Some(i);
+                            best_dx = dx;
+                            best_pos = p;
+                            best_value_blocksxy = Some(value);
                         }
                     }
                 }
+
                 PlotGeometry::Rects | PlotGeometry::None => {}
             }
 
-            if let Some(ix) = best_ix {
-                let value = match item.geometry() {
-                    PlotGeometry::Points(points) => points[ix],
-                    PlotGeometry::PointsXY { xs, ys } => PlotPoint {
-                        x: xs[ix],
-                        y: ys[ix],
-                    },
-                    _ => continue,
-                };
-                hits.push(HitPoint {
-                    series_name: item.name().to_owned(),
-                    color: base_color,
-                    value,
-                    screen_pos: best_pos,
-                    screen_dx: best_dx,
-                });
-            }
+            let value = match item.geometry() {
+                PlotGeometry::Points(points) => {
+                    let Some(ix) = best_ix else { continue };
+                    points[ix]
+                }
+                PlotGeometry::PointsXY { xs, ys } => {
+                    if let Some(v) = best_value_pointsxy {
+                        v
+                    } else {
+                        let Some(ix) = best_ix else { continue };
+                        PlotPoint {
+                            x: xs[ix],
+                            y: ys[ix],
+                        }
+                    }
+                }
+                PlotGeometry::BlocksXY { .. } => {
+                    if let Some(v) = best_value_blocksxy {
+                        v
+                    } else {
+                        continue;
+                    }
+                }
+                PlotGeometry::Rects | PlotGeometry::None => continue,
+            };
+
+            hits.push(HitPoint {
+                series_name: item.name().to_owned(),
+                color: base_color,
+                value,
+                screen_pos: best_pos,
+                screen_dx: best_dx,
+            });
         }
 
         if hits.is_empty() {
