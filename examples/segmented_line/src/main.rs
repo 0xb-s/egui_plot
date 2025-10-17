@@ -1,7 +1,6 @@
-// examples/segmented_blocks/src/main.rs
 #![allow(rustdoc::missing_crate_level_docs)]
 use eframe::{egui, egui::Color32};
-use egui_plot::{Line, Plot};
+use egui_plot::{Legend, Line, Plot, TooltipOptions};
 
 fn main() -> eframe::Result<()> {
     eframe::run_native(
@@ -14,7 +13,6 @@ fn main() -> eframe::Result<()> {
 struct Demo {
     x_blocks: Vec<Vec<f64>>,
     y_blocks: Vec<Vec<f64>>,
-
     xs_full: Vec<f64>,
     ys_full: Vec<f64>,
 }
@@ -47,7 +45,11 @@ impl eframe::App for Demo {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label("Red = segmented (blocks), Blue = continuous (for comparison)");
-            let plot = Plot::new("seg_blocks").show_x(true).show_y(true);
+
+            let plot = Plot::new("seg_blocks")
+                .show_x(true)
+                .show_y(true)
+                .legend(Legend::default());
 
             plot.show(ui, |plot_ui| {
                 let xs_blocks: Vec<&[f64]> = self.x_blocks.iter().map(|v| v.as_slice()).collect();
@@ -60,10 +62,27 @@ impl eframe::App for Demo {
                 );
 
                 plot_ui.line(
-                    egui_plot::Line::new_xy("continuous (reference)", &self.xs_full, &self.ys_full)
+                    Line::new_xy("continuous (reference)", &self.xs_full, &self.ys_full)
                         .color(Color32::from_rgb(90, 140, 255))
                         .width(1.0),
                 );
+
+                let opts = TooltipOptions::default();
+                plot_ui.show_tooltip_across_series_with(&opts, |ui, hits, pins| {
+                    ui.strong("Nearest per series");
+                    ui.separator();
+                    #[allow(deprecated)]
+                    for h in hits {
+                        ui.label(format!(
+                            "{}:  x={:.3}  y={:.3}",
+                            h.series_name, h.value.x, h.value.y
+                        ));
+                    }
+                    if !pins.is_empty() {
+                        ui.separator();
+                        ui.weak(format!("Pins: {}", pins.len()));
+                    }
+                });
             });
         });
     }
