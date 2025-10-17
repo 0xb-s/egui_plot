@@ -1,8 +1,7 @@
 #![allow(rustdoc::missing_crate_level_docs)]
+use crate::transform::PlotBounds;
 use core::fmt;
 use core::ops::{Bound, RangeBounds};
-
-use crate::transform::PlotBounds;
 
 /// A zero-copy Series of `(x, y)`.
 ///
@@ -83,6 +82,7 @@ impl<'a> ColumnarSeries<'a> {
     }
 
     /// Return an iterator over `(x, y)` pairs (by value).
+    #[allow(clippy::iter_without_into_iter)]
     #[inline]
     pub fn iter(&self) -> ColumnarSeriesIter<'a> {
         ColumnarSeriesIter {

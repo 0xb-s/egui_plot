@@ -11,10 +11,8 @@ use egui::{
     pos2, vec2,
 };
 
-use emath::Float as _;
-use rect_elem::{RectElement, highlighted_color};
-
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
+
 pub use crate::items::tooltip::HitPoint;
 pub use crate::items::tooltip::PinnedPoints;
 pub use crate::items::tooltip::TooltipOptions;
@@ -22,18 +20,23 @@ pub use band::Band;
 pub use bar::Bar;
 pub use box_elem::{BoxElem, BoxSpread};
 pub use columnar_series::ColumnarSeries;
+use emath::Float as _;
+use rect_elem::{RectElement, highlighted_color};
+pub use scatter::Marker;
+pub use scatter::Scatter;
+pub use scatter::ScatterEncodings;
 pub use values::{
     ClosestElem, LineStyle, MarkerShape, Orientation, PlotGeometry, PlotPoint, PlotPoints,
 };
-
 mod band;
 mod bar;
 mod box_elem;
 mod columnar_series;
+pub(crate) mod geom_helpers;
 mod rect_elem;
+mod scatter;
 mod tooltip;
 mod values;
-
 const DEFAULT_FILL_ALPHA: f32 = 0.05;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +175,33 @@ pub trait PlotItem {
                     })
                     .min_by_key(|e| e.dist_sq.ord())
             }
+
+            PlotGeometry::BlocksXY {
+                xs_blocks,
+                ys_blocks,
+            } => {
+                let mut best: Option<ClosestElem> = None;
+                let mut flat = 0usize; // flatten (block,i) → single index
+                let nb = xs_blocks.len().min(ys_blocks.len());
+                for b in 0..nb {
+                    let xs = xs_blocks[b];
+                    let ys = ys_blocks[b];
+                    let n = xs.len().min(ys.len());
+                    for i in 0..n {
+                        let p = PlotPoint { x: xs[i], y: ys[i] };
+                        let pos = transform.position_from_point(&p);
+                        let d = point.distance_sq(pos);
+                        if best.as_ref().is_none_or(|e| d < e.dist_sq) {
+                            best = Some(ClosestElem {
+                                index: flat,
+                                dist_sq: d,
+                            });
+                        }
+                        flat += 1;
+                    }
+                }
+                best
+            }
         }
     }
 
@@ -188,6 +218,33 @@ pub trait PlotItem {
             PlotGeometry::Points(points) => points,
             PlotGeometry::None => {
                 panic!("If the PlotItem has no geometry, on_hover() must not be called")
+            }
+            PlotGeometry::BlocksXY {
+                xs_blocks,
+                ys_blocks,
+            } => {
+                // map flat index → (block, i)
+                let mut idx = elem.index;
+                let mut value = PlotPoint {
+                    x: f64::NAN,
+                    y: f64::NAN,
+                };
+                let nb = xs_blocks.len().min(ys_blocks.len());
+                for b in 0..nb {
+                    let xs = xs_blocks[b];
+                    let ys = ys_blocks[b];
+                    let n = xs.len().min(ys.len());
+                    if idx < n {
+                        value = PlotPoint {
+                            x: xs[idx],
+                            y: ys[idx],
+                        };
+                        break;
+                    } else {
+                        idx -= n;
+                    }
+                }
+                &[value]
             }
             PlotGeometry::PointsXY { xs, ys } => {
                 let x = xs[elem.index];
@@ -208,7 +265,10 @@ pub trait PlotItem {
         };
 
         // this method is only called, if the value is in the result set of find_closest()
-        let value = points[elem.index];
+        let value = match self.geometry() {
+            PlotGeometry::BlocksXY { .. } => points[0], // <- single-element slice from the match above
+            _ => points[elem.index],
+        };
         let pointer = plot.transform.position_from_point(&value);
         shapes.push(Shape::circle_filled(pointer, 3.0, line_color));
 
@@ -421,6 +481,10 @@ impl PlotItem for VLine {
     }
 }
 
+pub struct LineBlocks<'a> {
+    pub xs: Vec<&'a [f64]>,
+    pub ys: Vec<&'a [f64]>,
+}
 /// A series of values forming a path.
 pub struct Line<'a> {
     base: PlotItemBase,
@@ -433,6 +497,8 @@ pub struct Line<'a> {
     pub(super) gradient_color: Option<Arc<dyn Fn(PlotPoint) -> Color32 + Send + Sync>>,
     pub(super) gradient_fill: bool,
     pub(super) style: LineStyle,
+    // segmentation
+    pub(super) blocks_xy: Option<LineBlocks<'a>>,
 }
 impl<'a> Line<'a> {
     #[inline]
@@ -451,11 +517,39 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
+            blocks_xy: None,
         }
     }
 }
 
 impl<'a> Line<'a> {
+    #[inline]
+    pub fn new_xy_blocks(
+        name: impl Into<String>,
+        xs_blocks: Vec<&'a [f64]>,
+        ys_blocks: Vec<&'a [f64]>,
+    ) -> Self {
+        assert_eq!(xs_blocks.len(), ys_blocks.len(), "blocks count mismatch");
+        for (i, (&xs, &ys)) in xs_blocks.iter().zip(&ys_blocks).enumerate() {
+            assert_eq!(xs.len(), ys.len(), "block #{i} lengths don't match");
+        }
+
+        Self {
+            base: PlotItemBase::new(name.into()),
+            columnar: None,
+            series: None,
+            stroke: Stroke::new(1.5, Color32::TRANSPARENT),
+            fill: None,
+            fill_alpha: DEFAULT_FILL_ALPHA,
+            gradient_color: None,
+            gradient_fill: false,
+            style: LineStyle::Solid,
+            blocks_xy: Some(LineBlocks {
+                xs: xs_blocks,
+                ys: ys_blocks,
+            }),
+        }
+    }
     pub fn new(name: impl Into<String>, series: impl Into<PlotPoints<'a>>) -> Self {
         Self {
             base: PlotItemBase::new(name.into()),
@@ -467,6 +561,7 @@ impl<'a> Line<'a> {
             gradient_color: None,
             gradient_fill: false,
             style: LineStyle::Solid,
+            blocks_xy: None,
         }
     }
 
@@ -540,6 +635,7 @@ fn y_intersection(p1: &Pos2, p2: &Pos2, y: f32) -> Option<f32> {
 }
 
 impl PlotItem for Line<'_> {
+    #[allow(clippy::too_many_lines)]
     fn shapes(&self, _ui: &Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
         let Self {
             base,
@@ -547,8 +643,11 @@ impl PlotItem for Line<'_> {
             series,
             stroke,
             fill,
+            fill_alpha: self_fill_alpha,
+            gradient_color,
             gradient_fill,
             style,
+            blocks_xy,
             ..
         } = self;
 
@@ -557,13 +656,102 @@ impl PlotItem for Line<'_> {
         let mut final_stroke: PathStroke = (*stroke).into();
         // if we have a gradient color, we need to wrap the stroke callback to transpose the position to a value
         // the caller can reason about
-        if let Some(gradient_callback) = self.gradient_color.clone() {
-            let local_transform = *transform;
-            let wrapped_callback = move |_rec: Rect, pos: Pos2| -> Color32 {
-                let point = local_transform.value_from_position(pos);
-                gradient_callback(point)
+        if let Some(callback) = gradient_color.clone() {
+            let local_tf = *transform;
+            let wrapped =
+                move |_r: Rect, p: Pos2| -> Color32 { callback(local_tf.value_from_position(p)) };
+            final_stroke = PathStroke::new_uv(stroke.width, wrapped);
+        }
+
+        if let Some(blocks) = blocks_xy {
+            let mut draw_one_block = |xs: &[f64], ys: &[f64]| {
+                let len = xs.len().min(ys.len());
+
+                let get_pos = |i: usize| {
+                    let v = PlotPoint { x: xs[i], y: ys[i] };
+                    transform.position_from_point(&v)
+                };
+
+                if len >= 2 {
+                    if let Some(y_ref) = fill {
+                        let mut fill_alpha = *self_fill_alpha;
+                        if base.highlight {
+                            fill_alpha = (2.0 * fill_alpha).at_most(1.0);
+                        }
+                        let y_line = transform.position_from_point(&PlotPoint::new(0.0, y_ref)).y;
+
+                        let mut fill_color: Color32 = Rgba::from(stroke.color)
+                            .to_opaque()
+                            .multiply(fill_alpha)
+                            .into();
+
+                        let mut mesh = Mesh::default();
+                        let expected_intersections = 20;
+                        mesh.reserve_triangles(len.saturating_sub(1) * 2);
+                        mesh.reserve_vertices(len * 2 + expected_intersections);
+
+                        let mut p0 = get_pos(0);
+                        for i in 0..(len - 1) {
+                            let p1 = get_pos(i + 1);
+                            #[allow(clippy::excessive_nesting)]
+                            if *gradient_fill {
+                                if let Some(grad) = gradient_color.as_ref() {
+                                    fill_color =
+                                        Rgba::from(grad(transform.value_from_position(p1)))
+                                            .to_opaque()
+                                            .multiply(fill_alpha)
+                                            .into();
+                                }
+                            }
+
+                            let base_idx = mesh.vertices.len() as u32;
+                            mesh.colored_vertex(p0, fill_color);
+                            mesh.colored_vertex(pos2(p0.x, y_line), fill_color);
+
+                            if let Some(xi) = y_intersection(&p0, &p1, y_line) {
+                                let xp = pos2(xi, y_line);
+                                mesh.colored_vertex(xp, fill_color);
+                                mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                                mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                                mesh.colored_vertex(p1, fill_color);
+                                mesh.add_triangle(base_idx + 2, base_idx + 3, base_idx + 4);
+                            } else {
+                                mesh.colored_vertex(p1, fill_color);
+                                mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                                mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                                mesh.add_triangle(base_idx + 1, base_idx + 2, base_idx + 3);
+                            }
+
+                            p0 = p1;
+                        }
+
+                        let last = get_pos(len - 1);
+                        mesh.colored_vertex(last, fill_color);
+                        mesh.colored_vertex(pos2(last.x, y_line), fill_color);
+
+                        shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
+                    }
+
+                    let draw_stroke = final_stroke.width > 0.0
+                        && final_stroke.color
+                            != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+                    if draw_stroke {
+                        let mut scratch: Vec<Pos2> = Vec::new();
+                        style.style_line_iter(
+                            (0..len).map(get_pos),
+                            final_stroke.clone(),
+                            base.highlight,
+                            shapes,
+                            &mut scratch,
+                        );
+                    }
+                }
             };
-            final_stroke = PathStroke::new_uv(stroke.width, wrapped_callback);
+
+            for (xs, ys) in blocks.xs.iter().zip(&blocks.ys) {
+                draw_one_block(xs, ys);
+            }
+            return;
         }
 
         enum Src<'a> {
@@ -571,7 +759,6 @@ impl PlotItem for Line<'_> {
             Legacy { pts: &'a [PlotPoint] },
             Empty,
         }
-
         let src = if let Some(cs) = columnar {
             Src::Col {
                 xs: cs.xs(),
@@ -612,8 +799,9 @@ impl PlotItem for Line<'_> {
         if len < 2 {
             fill = None;
         }
+
         if let Some(y_reference) = fill {
-            let mut fill_alpha = self.fill_alpha;
+            let mut fill_alpha = *self_fill_alpha;
             if base.highlight {
                 fill_alpha = (2.0 * fill_alpha).at_most(1.0);
             }
@@ -636,7 +824,7 @@ impl PlotItem for Line<'_> {
                 let p1 = get_pos(i + 1);
 
                 if *gradient_fill {
-                    if let Some(grad) = self.gradient_color.as_ref() {
+                    if let Some(grad) = gradient_color.as_ref() {
                         fill_color = Rgba::from(grad(transform.value_from_position(p1)))
                             .to_opaque()
                             .multiply(fill_alpha)
@@ -676,9 +864,13 @@ impl PlotItem for Line<'_> {
             && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
         if draw_stroke {
             let mut scratch: Vec<Pos2> = Vec::new();
-            let iter = (0..len).map(get_pos);
-
-            style.style_line_iter(iter, final_stroke, base.highlight, shapes, &mut scratch);
+            style.style_line_iter(
+                (0..len).map(get_pos),
+                final_stroke,
+                base.highlight,
+                shapes,
+                &mut scratch,
+            );
         }
     }
 
@@ -701,7 +893,12 @@ impl PlotItem for Line<'_> {
     }
 
     fn geometry(&self) -> PlotGeometry<'_> {
-        if let Some(cs) = &self.columnar {
+        if let Some(b) = &self.blocks_xy {
+            PlotGeometry::BlocksXY {
+                xs_blocks: b.xs.clone(),
+                ys_blocks: b.ys.clone(),
+            }
+        } else if let Some(cs) = &self.columnar {
             PlotGeometry::PointsXY {
                 xs: cs.xs(),
                 ys: cs.ys(),
@@ -714,6 +911,18 @@ impl PlotItem for Line<'_> {
     }
 
     fn bounds(&self) -> PlotBounds {
+        if let Some(b) = &self.blocks_xy {
+            let mut out = PlotBounds::NOTHING;
+            for (xs, ys) in b.xs.iter().zip(&b.ys) {
+                let cs = ColumnarSeries::new_truncating(xs, ys);
+                let b = cs.bounds();
+                out.extend_with_x(b.min()[0]);
+                out.extend_with_x(b.max()[0]);
+                out.extend_with_y(b.min()[1]);
+                out.extend_with_y(b.max()[1]);
+            }
+            return out;
+        }
         if let Some(cs) = &self.columnar {
             cs.bounds()
         } else if let Some(series) = &self.series {
@@ -1125,6 +1334,10 @@ impl PlotItem for Points<'_> {
                         shapes.push(Shape::line_segment(vertical, default_stroke));
                         shapes.push(Shape::line_segment(diagonal1, default_stroke));
                         shapes.push(Shape::line_segment(diagonal2, default_stroke));
+                    }
+                    #[allow(clippy::unimplemented)]
+                    _ => {
+                        unimplemented!()
                     }
                 }
             });
