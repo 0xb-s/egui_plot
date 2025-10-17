@@ -4,6 +4,7 @@ use egui::Color32;
 use egui_plot::MarkerShape;
 use egui_plot::Plot;
 use egui_plot::Scatter;
+use egui_plot::TooltipOptions;
 
 fn main() -> eframe::Result<()> {
     eframe::run_native(
@@ -22,7 +23,7 @@ impl App for Demo {
             let ys0: Vec<f64> = xs.iter().map(|&x| (x * 0.5).sin()).collect();
 
             Plot::new("scatter_min").show(ui, |plot_ui| {
-            
+                // series 1
                 let s0 = egui_plot::ColumnarSeries::new(xs.as_slice(), ys0.as_slice());
                 plot_ui.add(
                     Scatter::from_series("sin", s0)
@@ -31,6 +32,7 @@ impl App for Demo {
                         .radius(5.0)
                         .filled(true),
                 );
+                plot_ui.show_tooltip_with_options(&TooltipOptions::default());
             });
         });
     }
