@@ -911,7 +911,6 @@ impl PlotItem for Line<'_> {
                         );
                     }
 
-                    // --- markers for blocks ---
                     if let Some(marker) = &self.markers {
                         let auto_fallback = if stroke.color == Color32::TRANSPARENT {
                             _ui.visuals().text_color()
@@ -1058,7 +1057,6 @@ impl PlotItem for Line<'_> {
             );
         }
 
-        // --- markers for normal (non-block) series ---
         if let Some(marker) = &self.markers {
             let auto_fallback = if stroke.color == Color32::TRANSPARENT {
                 _ui.visuals().text_color()
