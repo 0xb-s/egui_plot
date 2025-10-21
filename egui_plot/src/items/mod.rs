@@ -13,6 +13,7 @@ use egui::{
 
 use super::{Cursor, LabelFormatter, PlotBounds, PlotTransform};
 
+use crate::items::scatter::MarkerColor;
 pub use crate::items::tooltip::HitPoint;
 pub use crate::items::tooltip::PinnedPoints;
 pub use crate::items::tooltip::TooltipOptions;
@@ -499,7 +500,41 @@ pub struct Line<'a> {
     pub(super) style: LineStyle,
     // segmentation
     pub(super) blocks_xy: Option<LineBlocks<'a>>,
+
+    pub(super) markers: Option<Marker>,
 }
+impl Line<'_> {
+    pub fn markers(mut self, m: Marker) -> Self {
+        self.markers = Some(m);
+        self
+    }
+    pub fn markers_enabled(mut self, yes: bool) -> Self {
+        self.markers = if yes { Some(Marker::default()) } else { None };
+        self
+    }
+}
+fn resolve_marker_color(
+    marker: &Marker,
+    auto_fallback: Color32,
+    pp: PlotPoint,
+    line_gradient: Option<&Arc<dyn Fn(PlotPoint) -> Color32 + Send + Sync>>,
+) -> Color32 {
+    if let Some(c) = marker.color {
+        return c; // legacy fixed color wins
+    }
+    match marker.color_mode {
+        MarkerColor::Fixed(c) => c,
+        MarkerColor::FromGradient => {
+            if let Some(g) = line_gradient {
+                g(pp)
+            } else {
+                auto_fallback
+            }
+        }
+        MarkerColor::Auto => auto_fallback,
+    }
+}
+
 impl<'a> Line<'a> {
     #[inline]
     pub fn new_xy(name: impl Into<String>, xs: &'a [f64], ys: &'a [f64]) -> Self {
@@ -518,6 +553,7 @@ impl<'a> Line<'a> {
             gradient_fill: false,
             style: LineStyle::Solid,
             blocks_xy: None,
+            markers: Some(Marker::default()),
         }
     }
 }
@@ -548,6 +584,7 @@ impl<'a> Line<'a> {
                 xs: xs_blocks,
                 ys: ys_blocks,
             }),
+            markers: Some(Marker::default()),
         }
     }
     pub fn new(name: impl Into<String>, series: impl Into<PlotPoints<'a>>) -> Self {
@@ -562,6 +599,7 @@ impl<'a> Line<'a> {
             gradient_fill: false,
             style: LineStyle::Solid,
             blocks_xy: None,
+            markers: Some(Marker::default()),
         }
     }
 
@@ -663,6 +701,133 @@ impl PlotItem for Line<'_> {
             final_stroke = PathStroke::new_uv(stroke.width, wrapped);
         }
 
+        // small local helper to draw a single marker at a screen position with a resolved color
+        let draw_one_marker =
+            |marker: &Marker, pos: Pos2, color: Color32, highlight: bool, out: &mut Vec<Shape>| {
+                let sqrt_3 = 3f32.sqrt();
+                let frac_sqrt_3_2 = sqrt_3 / 2.0;
+                let frac_1_sqrt_2 = 1.0 / 2f32.sqrt();
+
+                let mut radius = marker.radius;
+                let stroke = marker.stroke;
+                let default_stroke = Stroke::new(stroke.width.max(1.0), color);
+                let (fill_col, outline) = if marker.filled {
+                    (color, Stroke::NONE)
+                } else {
+                    (
+                        Color32::TRANSPARENT,
+                        Stroke::new(stroke.width.max(1.0), color),
+                    )
+                };
+
+                if highlight {
+                    radius *= 2f32.sqrt();
+                }
+
+                let tf = |dx: f32, dy: f32| -> Pos2 { pos + radius * vec2(dx, dy) };
+
+                match marker.shape {
+                    MarkerShape::Circle => {
+                        out.push(Shape::Circle(CircleShape {
+                            center: pos,
+                            radius,
+                            fill: fill_col,
+                            stroke: outline,
+                        }));
+                    }
+                    MarkerShape::Square => {
+                        let points = vec![
+                            tf(-frac_1_sqrt_2, frac_1_sqrt_2),
+                            tf(-frac_1_sqrt_2, -frac_1_sqrt_2),
+                            tf(frac_1_sqrt_2, -frac_1_sqrt_2),
+                            tf(frac_1_sqrt_2, frac_1_sqrt_2),
+                        ];
+                        out.push(Shape::convex_polygon(
+                            points,
+                            fill_col,
+                            if marker.filled {
+                                Stroke::NONE
+                            } else {
+                                Stroke::new(stroke.width.max(1.0), color)
+                            },
+                        ));
+                    }
+                    MarkerShape::Diamond => {
+                        let points = vec![tf(0.0, 1.0), tf(-1.0, 0.0), tf(0.0, -1.0), tf(1.0, 0.0)];
+                        out.push(Shape::convex_polygon(
+                            points,
+                            fill_col,
+                            if marker.filled {
+                                Stroke::NONE
+                            } else {
+                                Stroke::new(stroke.width.max(1.0), color)
+                            },
+                        ));
+                    }
+                    MarkerShape::Cross => {
+                        let diagonal1 = [
+                            tf(-frac_1_sqrt_2, -frac_1_sqrt_2),
+                            tf(frac_1_sqrt_2, frac_1_sqrt_2),
+                        ];
+                        let diagonal2 = [
+                            tf(frac_1_sqrt_2, -frac_1_sqrt_2),
+                            tf(-frac_1_sqrt_2, frac_1_sqrt_2),
+                        ];
+                        out.push(Shape::line_segment(diagonal1, default_stroke));
+                        out.push(Shape::line_segment(diagonal2, default_stroke));
+                    }
+                    MarkerShape::Plus => {
+                        let horizontal = [tf(-1.0, 0.0), tf(1.0, 0.0)];
+                        let vertical = [tf(0.0, -1.0), tf(0.0, 1.0)];
+                        out.push(Shape::line_segment(horizontal, default_stroke));
+                        out.push(Shape::line_segment(vertical, default_stroke));
+                    }
+                    MarkerShape::Up => {
+                        let points =
+                            vec![tf(0.0, -1.0), tf(0.5 * sqrt_3, 0.5), tf(-0.5 * sqrt_3, 0.5)];
+                        out.push(Shape::convex_polygon(points, fill_col, outline));
+                    }
+                    MarkerShape::Down => {
+                        let points = vec![
+                            tf(0.0, 1.0),
+                            tf(-0.5 * sqrt_3, -0.5),
+                            tf(0.5 * sqrt_3, -0.5),
+                        ];
+                        out.push(Shape::convex_polygon(points, fill_col, outline));
+                    }
+                    MarkerShape::Left => {
+                        let points =
+                            vec![tf(-1.0, 0.0), tf(0.5, -0.5 * sqrt_3), tf(0.5, 0.5 * sqrt_3)];
+                        out.push(Shape::convex_polygon(points, fill_col, outline));
+                    }
+                    MarkerShape::Right => {
+                        let points = vec![
+                            tf(1.0, 0.0),
+                            tf(-0.5, 0.5 * sqrt_3),
+                            tf(-0.5, -0.5 * sqrt_3),
+                        ];
+                        out.push(Shape::convex_polygon(points, fill_col, outline));
+                    }
+                    MarkerShape::Asterisk => {
+                        let vertical = [tf(0.0, -1.0), tf(0.0, 1.0)];
+                        let diagonal1 = [tf(-frac_sqrt_3_2, 0.5), tf(frac_sqrt_3_2, -0.5)];
+                        let diagonal2 = [tf(-frac_sqrt_3_2, -0.5), tf(frac_sqrt_3_2, 0.5)];
+                        out.push(Shape::line_segment(vertical, default_stroke));
+                        out.push(Shape::line_segment(diagonal1, default_stroke));
+                        out.push(Shape::line_segment(diagonal2, default_stroke));
+                    }
+                    _ => {
+                        // Fallback to circle for less common shapes in this context
+                        out.push(Shape::Circle(CircleShape {
+                            center: pos,
+                            radius,
+                            fill: fill_col,
+                            stroke: outline,
+                        }));
+                    }
+                }
+            };
+
         if let Some(blocks) = blocks_xy {
             let mut draw_one_block = |xs: &[f64], ys: &[f64]| {
                 let len = xs.len().min(ys.len());
@@ -744,6 +909,26 @@ impl PlotItem for Line<'_> {
                             shapes,
                             &mut scratch,
                         );
+                    }
+
+                    // --- markers for blocks ---
+                    if let Some(marker) = &self.markers {
+                        let auto_fallback = if stroke.color == Color32::TRANSPARENT {
+                            _ui.visuals().text_color()
+                        } else {
+                            stroke.color
+                        };
+                        for i in 0..len {
+                            let pp = PlotPoint { x: xs[i], y: ys[i] };
+                            let pos = transform.position_from_point(&pp);
+                            let color = resolve_marker_color(
+                                marker,
+                                auto_fallback,
+                                pp,
+                                gradient_color.as_ref(),
+                            );
+                            draw_one_marker(marker, pos, color, base.highlight, shapes);
+                        }
                     }
                 }
             };
@@ -871,6 +1056,45 @@ impl PlotItem for Line<'_> {
                 shapes,
                 &mut scratch,
             );
+        }
+
+        // --- markers for normal (non-block) series ---
+        if let Some(marker) = &self.markers {
+            let auto_fallback = if stroke.color == Color32::TRANSPARENT {
+                _ui.visuals().text_color()
+            } else {
+                stroke.color
+            };
+
+            match src {
+                Src::Col { xs, ys } => {
+                    for i in 0..len {
+                        let pp = PlotPoint { x: xs[i], y: ys[i] };
+                        let pos = transform.position_from_point(&pp);
+                        let color = resolve_marker_color(
+                            marker,
+                            auto_fallback,
+                            pp,
+                            gradient_color.as_ref(),
+                        );
+                        draw_one_marker(marker, pos, color, base.highlight, shapes);
+                    }
+                }
+                Src::Legacy { pts } => {
+                    for &pp in pts.iter().take(len) {
+                        let pos = transform.position_from_point(&pp);
+                        let color = resolve_marker_color(
+                            marker,
+                            auto_fallback,
+                            pp,
+                            gradient_color.as_ref(),
+                        );
+                        draw_one_marker(marker, pos, color, base.highlight, shapes);
+                    }
+                }
+
+                Src::Empty => {}
+            }
         }
     }
 
