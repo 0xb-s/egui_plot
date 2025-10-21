@@ -1,4 +1,4 @@
-//! scatter.rs – Zero-copy scatter plot API
+//! scatter.rs – Zero-copy scatter plot API.
 
 use crate::{
     MarkerShape, PlotBounds, PlotPoint, PlotTransform,
