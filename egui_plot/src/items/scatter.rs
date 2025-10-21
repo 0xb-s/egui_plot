@@ -18,6 +18,19 @@ pub struct Marker {
     pub stroke: Stroke,
     /// None = auto color from Plot palette.
     pub color: Option<Color32>,
+
+    pub color_mode: MarkerColor,
+    ///draw only every Nth point (1 = all). Defaults to 1.
+    pub every_nth: std::num::NonZeroUsize,
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub enum MarkerColor {
+    /// Plot auto
+    #[default]
+    Auto,
+    ///  fixed color.
+    Fixed(Color32),
+    FromGradient,
 }
 
 impl Default for Marker {
@@ -28,10 +41,22 @@ impl Default for Marker {
             radius: 2.5,
             stroke: Stroke::new(1.0, Color32::TRANSPARENT),
             color: None,
+            color_mode: MarkerColor::Auto,
+            every_nth: std::num::NonZeroUsize::new(1).expect("n must be non-zero"),
         }
     }
 }
+impl Marker {
+    pub fn color_mode(mut self, m: MarkerColor) -> Self {
+        self.color_mode = m;
+        self
+    }
 
+    pub fn every_nth(mut self, n: usize) -> Self {
+        self.every_nth = std::num::NonZeroUsize::new(n.max(1)).expect("n must be non-zero");
+        self
+    }
+}
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScatterEncodings<'a> {
     pub per_point_colors: Option<&'a [Color32]>,
