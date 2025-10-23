@@ -14,6 +14,7 @@ mod items;
 mod legend;
 mod memory;
 mod plot_ui;
+mod span;
 mod transform;
 use std::{cmp::Ordering, ops::RangeInclusive, sync::Arc};
 mod action;
@@ -26,6 +27,7 @@ use egui::{
     Response, Sense, Shape, Stroke, TextStyle, Ui, Vec2, Vec2b, WidgetText, epaint, remap_clamp,
     vec2,
 };
+pub use span::{HSpan, VSpan};
 
 use emath::Float as _;
 
