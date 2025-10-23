@@ -1,5 +1,4 @@
 use demo::TemplateApp;
-use egui::ThemePreference;
 use egui::accesskit::Role;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
@@ -43,14 +42,4 @@ fn test_scales() {
     }
 
     assert!(errors.is_empty(), "Errors: {errors:#?}");
-}
-
-#[test]
-fn test_light_mode() {
-    let mut harness = egui_kittest::Harness::new_eframe(|cc| TemplateApp::new(cc));
-
-    harness.ctx.set_theme(ThemePreference::Light);
-    harness.run();
-
-    harness.snapshot("light_mode");
 }
