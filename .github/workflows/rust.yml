@@ -103,5 +103,4 @@ jobs:
 
 
 
-          name: test-results
-          path: "**/tests/snapshots"
+       
