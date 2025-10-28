@@ -40,8 +40,3 @@ pub fn push_polygon_at(
         out.push(Shape::closed_line(pts, Stroke::new(stroke.width, color)));
     }
 }
-// #[inline]
-// //todo
-// pub fn degree_to_radius(d: i16) -> f32 {
-//     (d as f32) * PI / 180.0
-// }
