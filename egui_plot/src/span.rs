@@ -2,49 +2,32 @@ use std::ops::RangeInclusive;
 
 use egui::{Color32, Rect, Shape, Stroke, Ui, pos2};
 
-use crate::{Interval, PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotPoint, PlotTransform};
+use crate::{
+    Interval, PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotTransform,
+    interval_to_screen_y, span_utils::interval_to_screen_x,
+};
 
-/// A horizontal shaded region y ∈ (`y_min`, `y_max`), spanning full plot width.
-/// Semi-open ends are supported by passing `None` for either side.
+/// Horizontal shaded band for a Y interval across full plot width.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HSpan {
     base: PlotItemBase,
-    /// Fill color of the band.
+
+    /// Vertical interval in data space.
+    y: Interval,
+
+    /// Fill color of the band
     fill: Color32,
+
     /// Optional outline stroke around the band. `None` = no outline.
     stroke: Option<Stroke>,
+
     /// Toggle visibility via code.
     visible: bool,
-
-    y: Interval,
 }
 
 impl HSpan {
-    /// Create a horizontal span with an  name and optional bounds.
-    /// Use `None` to make the span open-ended on that side.
-    pub fn new(name: impl Into<String>, y_min: Option<f64>, y_max: Option<f64>) -> Self {
-        let default = Color32::from_rgba_unmultiplied(128, 128, 128, 40);
-
-        let interval = Interval::from((y_min, y_max));
-
-        Self {
-            base: PlotItemBase::new(name.into()),
-            y: interval,
-            fill: default,
-            stroke: None,
-            visible: true,
-        }
-    }
-
-    /// Set the fill color (include transparency).
-    #[inline]
-    pub fn color(mut self, color: impl Into<Color32>) -> Self {
-        self.fill = color.into();
-        self
-    }
-
-    #[inline]
-    pub fn from_interval(name: impl Into<String>, y: Interval) -> Self {
+    /// Create a horizontal span from an explicit `Interval` in Y.
+    pub fn new(name: impl Into<String>, y: Interval) -> Self {
         let default = Color32::from_rgba_unmultiplied(128, 128, 128, 40);
         Self {
             base: PlotItemBase::new(name.into()),
@@ -53,6 +36,13 @@ impl HSpan {
             stroke: None,
             visible: true,
         }
+    }
+
+    /// Set the fill color
+    #[inline]
+    pub fn color(mut self, color: impl Into<Color32>) -> Self {
+        self.fill = color.into();
+        self
     }
 
     /// Optional outline stroke around the span.
@@ -75,10 +65,13 @@ impl PlotItem for HSpan {
         if !self.visible {
             return;
         }
+        if self.y.is_empty() {
+            return;
+        }
 
-        let (top, bottom) = self.y.to_screen_y(transform);
+        let (top, bottom) = interval_to_screen_y(&self.y, transform);
 
-        if (bottom - top).abs() <= f32::EPSILON || self.y.is_empty() {
+        if (bottom - top).abs() <= f32::EPSILON {
             return;
         }
 
@@ -110,15 +103,11 @@ impl PlotItem for HSpan {
     fn bounds(&self) -> PlotBounds {
         let mut b = PlotBounds::NOTHING;
 
-        if let Some(v) = self.y.start.value() {
-            if v.is_finite() {
-                b.extend_with_y(v);
-            }
+        if self.y.start.is_finite() {
+            b.extend_with_y(self.y.start);
         }
-        if let Some(v) = self.y.end.value() {
-            if v.is_finite() {
-                b.extend_with_y(v);
-            }
+        if self.y.end.is_finite() {
+            b.extend_with_y(self.y.end);
         }
 
         b
@@ -131,40 +120,37 @@ impl PlotItem for HSpan {
         &mut self.base
     }
 }
-
-/// A vertical shaded region x ∈ (`x_min`, `x_max`), spanning full plot height.
-/// Semi-open ends are supported by passing `None` for either side.
+/// Vertical shaded band for an X interval across full plot height.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VSpan {
     base: PlotItemBase,
-    /// Left X
-    x_min: Option<f64>,
-    /// Right X
-    x_max: Option<f64>,
-    /// Fill color of the band (recommended to be translucent).
+
+    /// Horizontal interval in data space.
+    x: Interval,
+
+    /// Fill color of the band (should usually be translucent).
     fill: Color32,
+
     /// Optional outline stroke around the band. `None` = no outline.
     stroke: Option<Stroke>,
+
     /// Toggle visibility via code.
     visible: bool,
 }
 
 impl VSpan {
-    /// Create a vertical span with an optional name and optional bounds.
-    /// Use `None` to make the span open-ended on that side.
-    pub fn new(name: impl Into<String>, x_min: Option<f64>, x_max: Option<f64>) -> Self {
+    /// Create a vertical span from an explicit `Interval` in X.
+    pub fn new(name: impl Into<String>, x: Interval) -> Self {
         let default = Color32::from_rgba_unmultiplied(128, 128, 128, 40);
         Self {
             base: PlotItemBase::new(name.into()),
-            x_min,
-            x_max,
+            x,
             fill: default,
             stroke: None,
             visible: true,
         }
     }
-
-    /// Set the fill color (include transparency).
+    /// Set the fill color .
     #[inline]
     pub fn color(mut self, color: impl Into<Color32>) -> Self {
         self.fill = color.into();
@@ -191,26 +177,17 @@ impl PlotItem for VSpan {
         if !self.visible {
             return;
         }
+        if self.x.is_empty() {
+            return;
+        }
 
-        let frame = transform.frame();
+        let (left, right) = interval_to_screen_x(&self.x, transform);
 
-        let map_x = |x_opt: Option<f64>, fallback_edge: f32| -> f32 {
-            match x_opt {
-                Some(x) if x.is_finite() => {
-                    transform.position_from_point(&PlotPoint::new(x, 0.0)).x
-                }
-                _ => fallback_edge,
-            }
-        };
-
-        let x0 = map_x(self.x_min, frame.left());
-        let x1 = map_x(self.x_max, frame.right());
-
-        let (left, right) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
         if (right - left).abs() <= f32::EPSILON {
             return;
         }
 
+        let frame = transform.frame();
         let rect = Rect::from_min_max(pos2(left, frame.top()), pos2(right, frame.bottom()));
 
         shapes.push(Shape::rect_filled(rect, 0.0, self.fill));
@@ -237,16 +214,14 @@ impl PlotItem for VSpan {
 
     fn bounds(&self) -> PlotBounds {
         let mut b = PlotBounds::NOTHING;
-        if let Some(x0) = self.x_min {
-            if x0.is_finite() {
-                b.extend_with_x(x0);
-            }
+
+        if self.x.start.is_finite() {
+            b.extend_with_x(self.x.start);
         }
-        if let Some(x1) = self.x_max {
-            if x1.is_finite() {
-                b.extend_with_x(x1);
-            }
+        if self.x.end.is_finite() {
+            b.extend_with_x(self.x.end);
         }
+
         b
     }
 
