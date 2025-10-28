@@ -16,19 +16,13 @@ mod legend;
 mod memory;
 mod plot_ui;
 mod span;
+mod span_utils;
 mod transform;
 use std::{cmp::Ordering, ops::RangeInclusive, sync::Arc};
 mod action;
 pub use crate::action::PlotEvent;
 pub use crate::action::{ActionExecutor, ActionQueue};
 pub use crate::action::{BoundsChangeCause, InputInfo, PinSnapshot};
-use ahash::HashMap;
-use egui::{
-    Align2, Color32, CursorIcon, Id, Layout, NumExt as _, PointerButton, Pos2, Rangef, Rect,
-    Response, Sense, Shape, Stroke, TextStyle, Ui, Vec2, Vec2b, WidgetText, epaint, remap_clamp,
-    vec2,
-};
-pub use span::{HSpan, VSpan};
 
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
@@ -43,8 +37,16 @@ pub use crate::{
     plot_ui::PlotUi,
     transform::{PlotBounds, PlotTransform},
 };
-pub use bound::Bound;
-pub use bound::EndKind;
+use ahash::HashMap;
+use egui::{
+    Align2, Color32, CursorIcon, Id, Layout, NumExt as _, PointerButton, Pos2, Rangef, Rect,
+    Response, Sense, Shape, Stroke, TextStyle, Ui, Vec2, Vec2b, WidgetText, epaint, remap_clamp,
+    vec2,
+};
+pub use span::{HSpan, VSpan};
+pub use span_utils::interval_to_screen_x;
+pub use span_utils::interval_to_screen_y;
+
 pub use bound::Interval;
 use emath::Float as _;
 
