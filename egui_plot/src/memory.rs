@@ -37,7 +37,7 @@ pub struct PlotMemory {
 impl PlotMemory {
     #[inline]
     pub fn transform(&self) -> PlotTransform {
-        self.transform
+        self.transform.clone()
     }
 
     #[inline]
