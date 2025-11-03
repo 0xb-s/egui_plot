@@ -2,6 +2,7 @@
 
 /// A numeric interval on `R` with optional ±∞ on either side.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct Interval {
     /// Lower bound in data units. Can be -∞.
     pub start: f64,
@@ -10,6 +11,9 @@ pub struct Interval {
 }
 
 impl Interval {
+    pub fn len(&self) -> f64 {
+        (self.end - self.start).max(0.0)
+    }
     /// Create a new interval from two endpoints.
     #[inline]
     pub fn new(a: f64, b: f64) -> Self {
