@@ -10,6 +10,7 @@
 #![allow(deprecated)]
 mod axis;
 mod bound;
+mod broken_axis;
 mod collect_events;
 mod items;
 mod legend;
@@ -24,6 +25,7 @@ pub use crate::action::PlotEvent;
 pub use crate::action::{ActionExecutor, ActionQueue};
 pub use crate::action::{BoundsChangeCause, InputInfo, PinSnapshot};
 
+pub use crate::broken_axis::BrokenXAxis;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
@@ -209,6 +211,8 @@ pub struct Plot<'a> {
     clamp_grid: bool,
 
     sense: Sense,
+
+    broken_x_axis: Option<BrokenXAxis>,
 }
 
 impl<'a> Plot<'a> {
@@ -257,9 +261,14 @@ impl<'a> Plot<'a> {
             clamp_grid: false,
 
             sense: egui::Sense::click_and_drag(),
+
+            broken_x_axis: None,
         }
     }
-
+    pub fn broken_x_axis(mut self, broken: Option<BrokenXAxis>) -> Self {
+        self.broken_x_axis = broken;
+        self
+    }
     /// Set an explicit (global) id for the plot.
     ///
     /// This will override the id set by [`Self::new`].
@@ -835,6 +844,7 @@ impl<'a> Plot<'a> {
             clamp_grid,
             grid_spacers,
             sense,
+            broken_x_axis,
         } = self;
 
         // Disable interaction if ui is disabled.
@@ -943,7 +953,7 @@ impl<'a> Plot<'a> {
             y_axis_thickness: Default::default(),
         });
 
-        let last_plot_transform = mem.transform;
+        let last_plot_transform = mem.transform.clone();
         // Call the plot build function.
         let mut plot_ui = PlotUi {
             ctx: ui.ctx().clone(),
@@ -1103,6 +1113,8 @@ impl<'a> Plot<'a> {
 
         // Build transform
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
+
+        mem.transform.set_broken_xaxis(broken_x_axis.clone());
 
         // Aspect
         if let Some(data_aspect) = data_aspect {
@@ -1386,21 +1398,21 @@ impl<'a> Plot<'a> {
 
         for (i, mut widget) in x_axis_widgets.into_iter().enumerate() {
             widget.range = x_axis_range.clone();
-            widget.transform = Some(mem.transform);
+            widget.transform = Some(mem.transform.clone());
             widget.steps = x_steps.clone();
             let (_response, thickness) = widget.ui(ui, Axis::X);
             mem.x_axis_thickness.insert(i, thickness);
         }
         for (i, mut widget) in y_axis_widgets.into_iter().enumerate() {
             widget.range = y_axis_range.clone();
-            widget.transform = Some(mem.transform);
+            widget.transform = Some(mem.transform.clone());
             widget.steps = y_steps.clone();
             let (_response, thickness) = widget.ui(ui, Axis::Y);
             mem.y_axis_thickness.insert(i, thickness);
         }
         // Initialize values from functions.
         for item in &mut items {
-            item.initialize(mem.transform.bounds().range_x());
+            item.initialize(mem.transform.clone().bounds().range_x());
         }
 
         // Draw items/grid/tooltip
@@ -1413,7 +1425,7 @@ impl<'a> Plot<'a> {
             coordinates_formatter,
             show_grid,
             grid_spacing,
-            transform: mem.transform,
+            transform: mem.transform.clone(),
             draw_cursor_x: linked_cursors.as_ref().is_some_and(|g| g.1.x),
             draw_cursor_y: linked_cursors.as_ref().is_some_and(|g| g.1.y),
             draw_cursors,
@@ -1484,7 +1496,7 @@ impl<'a> Plot<'a> {
             });
         }
 
-        let transform = mem.transform;
+        let transform = mem.transform.clone();
         mem.store(ui.ctx(), plot_id);
 
         response = if show_x || show_y {
