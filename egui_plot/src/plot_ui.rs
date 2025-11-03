@@ -20,6 +20,10 @@ pub struct PlotUi<'a> {
 }
 
 impl<'a> PlotUi<'a> {
+    #[inline]
+    pub fn set_broken_x_axis(&mut self, broken: Option<crate::BrokenXAxis>) {
+        self.last_plot_transform.set_broken_xaxis(broken);
+    }
     pub fn take_actions(self) -> ActionQueue<Box<dyn PlotItem + 'a>> {
         self.actions
     }
