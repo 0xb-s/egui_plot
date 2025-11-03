@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use egui::{Pos2, Rect, Vec2, Vec2b, pos2, remap};
 
-use crate::Axis;
+use crate::{Axis, broken_axis::BrokenXAxis};
 
 use super::PlotPoint;
 
@@ -266,7 +266,7 @@ impl PlotBounds {
 
 /// Contains the screen rectangle and the plot bounds and provides methods to transform between them.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PlotTransform {
     /// The screen rectangle.
     frame: Rect,
@@ -276,6 +276,10 @@ pub struct PlotTransform {
 
     /// Whether to always center the x-range or y-range of the bounds.
     centered: Vec2b,
+
+    broken_xaxis: Option<BrokenXAxis>,
+
+    pixels_per_x: f32,
 }
 
 impl PlotTransform {
@@ -286,15 +290,8 @@ impl PlotTransform {
         );
         let center_axis = center_axis.into();
 
-        // Since the current Y bounds an affect the final X bounds and vice versa, we need to keep
-        // the original version of the `bounds` before we start modifying it.
         let mut new_bounds = bounds;
 
-        // Sanitize bounds.
-        //
-        // When a given bound axis is "thin" (e.g. width or height is 0) but finite, we center the
-        // bounds around that value. If the other axis is "fat", we reuse its extent for the thin
-        // axis, and default to +/- 1.0 otherwise.
         if !bounds.is_finite_x() {
             new_bounds.set_x(&PlotBounds::new_symmetrical(1.0));
         } else if bounds.width() <= 0.0 {
@@ -321,7 +318,7 @@ impl PlotTransform {
             );
         };
 
-        // Scale axes so that the origin is in the center.
+        // center axis logic (unchanged)
         if center_axis.x {
             new_bounds.make_x_symmetrical();
         };
@@ -334,11 +331,26 @@ impl PlotTransform {
             "Bad final plot bounds: {new_bounds:?}"
         );
 
+        let pixels_per_x = frame.width() / (new_bounds.width() as f32).max(f32::EPSILON);
+
         Self {
             frame,
             bounds: new_bounds,
             centered: center_axis,
+            broken_xaxis: None,
+            pixels_per_x,
         }
+    }
+
+    /// Enable broken-x layout on this transform. Call this after constructing with `new()`.
+    pub fn with_broken_xaxis(mut self, broken: BrokenXAxis) -> Self {
+        if let Some(first) = broken.segments.first() {
+            let seg_len = first.len().max(f64::EPSILON) as f32;
+
+            self.pixels_per_x = self.frame.width() / seg_len;
+        }
+        self.broken_xaxis = Some(broken);
+        self
     }
 
     /// ui-space rectangle.
@@ -356,6 +368,10 @@ impl PlotTransform {
     #[inline]
     pub fn set_bounds(&mut self, bounds: PlotBounds) {
         self.bounds = bounds;
+        // update pixels_per_x if we are *not* in broken mode
+        if self.broken_xaxis.is_none() {
+            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
+        }
     }
 
     pub fn translate_bounds(&mut self, mut delta_pos: (f64, f64)) {
@@ -379,10 +395,21 @@ impl PlotTransform {
 
         if new_bounds.is_valid() {
             self.bounds = new_bounds;
+
+            // keep pixels_per_x in sync ONLY if we are in normal mode
+            if self.broken_xaxis.is_none() {
+                self.pixels_per_x =
+                    self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
+            }
         }
     }
 
+    /// X mapping: data.x -> screen.x
     pub fn position_from_point_x(&self, value: f64) -> f32 {
+        if let Some(bx) = &self.broken_xaxis {
+            return self.position_from_point_x_broken(value, bx);
+        }
+
         remap(
             value,
             self.bounds.min[0]..=self.bounds.max[0],
@@ -390,6 +417,7 @@ impl PlotTransform {
         ) as f32
     }
 
+    /// Y mapping: data.y -> screen.y
     pub fn position_from_point_y(&self, value: f64) -> f32 {
         remap(
             value,
@@ -407,17 +435,26 @@ impl PlotTransform {
     }
 
     /// Plot point from screen/ui position.
+    ///
+    /// NOTE: in broken-x mode, X inverse is not 1:1 inside gaps. We snap gaps
+    /// to the end of the previous segment.
     pub fn value_from_position(&self, pos: Pos2) -> PlotPoint {
-        let x = remap(
-            pos.x as f64,
-            (self.frame.left() as f64)..=(self.frame.right() as f64),
-            self.bounds.range_x(),
-        );
+        let x = if let Some(bx) = &self.broken_xaxis {
+            self.value_from_position_x_broken(pos.x, bx)
+        } else {
+            remap(
+                pos.x as f64,
+                (self.frame.left() as f64)..=(self.frame.right() as f64),
+                self.bounds.range_x(),
+            )
+        };
+
         let y = remap(
             pos.y as f64,
             (self.frame.bottom() as f64)..=(self.frame.top() as f64), // negated y axis!
             self.bounds.range_y(),
         );
+
         PlotPoint::new(x, y)
     }
 
@@ -437,12 +474,18 @@ impl PlotTransform {
 
     /// delta position / delta value = how many ui points per step in the X axis in "plot space"
     pub fn dpos_dvalue_x(&self) -> f64 {
-        self.frame.width() as f64 / self.bounds.width()
+        if self.broken_xaxis.is_some() {
+            // In broken mode, horizontal scale isn't global linear anymore.
+            // We expose the baseline pixels_per_x.
+            self.pixels_per_x as f64
+        } else {
+            self.frame.width() as f64 / self.bounds.width()
+        }
     }
 
     /// delta position / delta value = how many ui points per step in the Y axis in "plot space"
     pub fn dpos_dvalue_y(&self) -> f64 {
-        -self.frame.height() as f64 / self.bounds.height() // negated y axis!
+        -self.frame.height() as f64 / self.bounds.height()
     }
 
     /// delta position / delta value = how many ui points per step in "plot space"
@@ -472,7 +515,6 @@ impl PlotTransform {
 
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
-            // Don't make any changes when the aspect is already almost correct.
             return;
         }
 
@@ -483,6 +525,10 @@ impl PlotTransform {
             self.bounds
                 .expand_y((current_aspect / aspect - 1.0) * self.bounds.height() * 0.5);
         }
+
+        if self.broken_xaxis.is_none() {
+            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
+        }
     }
 
     /// Sets the aspect ratio by changing either the X or Y axis (callers choice).
@@ -491,7 +537,6 @@ impl PlotTransform {
 
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
-            // Don't make any changes when the aspect is already almost correct.
             return;
         }
 
@@ -504,6 +549,129 @@ impl PlotTransform {
                 self.bounds
                     .expand_y((current_aspect / aspect - 1.0) * self.bounds.height() * 0.5);
             }
+        }
+
+        if self.broken_xaxis.is_none() {
+            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
+        }
+    }
+
+    /// Map data.x -> screen.x under a broken/stitched x-axis definition.
+    fn position_from_point_x_broken(&self, x: f64, bx: &BrokenXAxis) -> f32 {
+        let mut cursor_px = self.frame.left();
+
+        for (i, seg) in bx.segments.iter().enumerate() {
+            let seg_len = seg.len();
+            let seg_px = (seg_len as f32) * self.pixels_per_x;
+
+            if seg.contains(x) {
+                let t = if seg_len > 0.0 {
+                    (x - seg.start) / seg_len
+                } else {
+                    0.0
+                };
+                return cursor_px + (t as f32) * seg_px;
+            }
+
+            cursor_px += seg_px;
+
+            if i + 1 < bx.segments.len() {
+                cursor_px += bx.gap_px;
+            }
+        }
+
+        cursor_px
+    }
+    #[inline]
+    pub fn broken_xaxis(&self) -> Option<&BrokenXAxis> {
+        self.broken_xaxis.as_ref()
+    }
+    pub fn is_x_in_visible_segments(&self, x: f64) -> bool {
+        if let Some(bx) = &self.broken_xaxis {
+            for seg in &bx.segments {
+                if x >= seg.start && x <= seg.end {
+                    return true;
+                }
+            }
+            false
+        } else {
+            true
+        }
+    }
+    /// Inverse of `position_from_point_x_broken`: screen.x -> data.x.
+    ///
+    /// Not 1:1 in gaps. Inside a gap we snap to the end of the segment to the left.
+    fn value_from_position_x_broken(&self, sx: f32, bx: &BrokenXAxis) -> f64 {
+        let mut cursor_px = self.frame.left();
+
+        for (i, seg) in bx.segments.iter().enumerate() {
+            let seg_len = seg.len();
+            let seg_px = (seg_len as f32) * self.pixels_per_x;
+
+            let seg_start_px = cursor_px;
+            let seg_end_px = cursor_px + seg_px;
+
+            if sx >= seg_start_px && sx <= seg_end_px {
+                let t = if seg_px > 0.0 {
+                    (sx - seg_start_px) / seg_px
+                } else {
+                    0.0
+                };
+                return seg.start + (t as f64) * seg.len();
+            }
+
+            cursor_px += seg_px;
+
+            if i + 1 < bx.segments.len() {
+                let gap_start_px = cursor_px;
+                let gap_end_px = cursor_px + bx.gap_px;
+
+                if sx >= gap_start_px && sx <= gap_end_px {
+                    return seg.end;
+                }
+
+                cursor_px += bx.gap_px;
+            }
+        }
+
+        if let Some(last) = bx.segments.last() {
+            last.end
+        } else {
+            remap(
+                sx as f64,
+                (self.frame.left() as f64)..=(self.frame.right() as f64),
+                self.bounds.range_x(),
+            )
+        }
+    }
+
+    pub fn set_broken_xaxis(&mut self, broken: Option<BrokenXAxis>) {
+        self.broken_xaxis = broken;
+
+        if let Some(bx) = &self.broken_xaxis {
+            let n = bx.segments.len();
+
+            let total_len: f64 = bx
+                .segments
+                .iter()
+                .map(|seg| seg.len().max(f64::EPSILON)) // avoid 0
+                .sum();
+
+            let total_gap_px: f32 = if n >= 2 {
+                bx.gap_px * ((n as u32).saturating_sub(1)) as f32
+            } else {
+                0.0
+            };
+
+            let usable_px = (self.frame.width()) - total_gap_px;
+
+            let usable_px = usable_px.max(1.0);
+
+            let scale = usable_px / (total_len as f32).max(f32::EPSILON);
+
+            self.pixels_per_x = scale;
+        } else {
+            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
         }
     }
 }
