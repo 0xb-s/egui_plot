@@ -190,15 +190,16 @@ impl PlotUi<'_> {
 
         let ctx = self.ctx().clone();
         let visuals = ctx.style().visuals.clone();
-        let transform = *self.transform();
-        let frame = transform.frame();
+        let transform = self.transform().clone();
+        let binding = transform.clone();
+        let frame = binding.frame();
 
         // Draw existing pins (rails + markers) on a foreground layer:
         let mut pins = load_pins(&ctx, self.response.id);
         draw_pins_overlay(
             &ctx,
             &pins,
-            transform,
+            &transform.clone(),
             *frame,
             &visuals,
             options.marker_radius,
@@ -494,7 +495,7 @@ impl PlotUi<'_> {
 fn draw_pins_overlay(
     ctx: &egui::Context,
     pins: &[PinnedPoints],
-    transform: crate::PlotTransform,
+    transform: &crate::PlotTransform,
     frame: Rect,
     visuals: &egui::style::Visuals,
     marker_radius: f32,
