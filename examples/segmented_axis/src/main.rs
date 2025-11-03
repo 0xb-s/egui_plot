@@ -1,3 +1,4 @@
+#![allow(rustdoc::missing_crate_level_docs)]
 use eframe::egui;
 use egui::{Color32, Slider};
 use egui_plot::{BrokenXAxis, Interval, Line, Plot, TooltipOptions};
@@ -14,15 +15,13 @@ struct MyApp {
     xs: Vec<f64>,
     ys: Vec<f64>,
 
-    mode: usize, 
+    mode: usize,
     gap_px: f32,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
-
         let xs: Vec<f64> = (0..=2100).map(|i| i as f64).collect();
-
 
         let ys: Vec<f64> = xs
             .iter()
@@ -97,37 +96,27 @@ impl eframe::App for MyApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-       
             let broken_cfg = match self.mode {
-                1 => {
-               
-                    Some(BrokenXAxis::new(
-                        vec![Interval::new(0.0, 200.0), Interval::new(800.0, 1000.0)],
-                        self.gap_px,
-                    ))
-                }
-                2 => {
-                 
-                    Some(BrokenXAxis::new(
-                        vec![
-                            Interval::new(0.0, 200.0),
-                            Interval::new(800.0, 1500.0),
-                            Interval::new(1700.0, 2000.0),
-                        ],
-                        self.gap_px,
-                    ))
-                }
-                3 => {
-                
-                    Some(BrokenXAxis::new(
-                        vec![
-                            Interval::new(0.0, 200.0),
-                            Interval::new(800.0, 820.0),
-                            Interval::new(2000.0, 2100.0),
-                        ],
-                        self.gap_px,
-                    ))
-                }
+                1 => Some(BrokenXAxis::new(
+                    vec![Interval::new(0.0, 200.0), Interval::new(800.0, 1000.0)],
+                    self.gap_px,
+                )),
+                2 => Some(BrokenXAxis::new(
+                    vec![
+                        Interval::new(0.0, 200.0),
+                        Interval::new(800.0, 1500.0),
+                        Interval::new(1700.0, 2000.0),
+                    ],
+                    self.gap_px,
+                )),
+                3 => Some(BrokenXAxis::new(
+                    vec![
+                        Interval::new(0.0, 200.0),
+                        Interval::new(800.0, 820.0),
+                        Interval::new(2000.0, 2100.0),
+                    ],
+                    self.gap_px,
+                )),
                 _ => None,
             };
 
