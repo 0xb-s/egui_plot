@@ -1,7 +1,7 @@
 #![allow(rustdoc::missing_crate_level_docs)]
 use eframe::egui;
 use egui::{Color32, Slider};
-use egui_plot::{BrokenXAxis, Interval, Line, Plot, TooltipOptions};
+use egui_plot::{Interval, Line, Plot, SegmentedAxis, TooltipOptions};
 
 fn main() -> eframe::Result<()> {
     eframe::run_native(
@@ -68,7 +68,7 @@ impl eframe::App for MyApp {
                 "3: (~-inf..200] ⊔ [800..820] ⊔ [2000..+inf)  (simulated)",
             );
 
-            ui.add(Slider::new(&mut self.gap_px, 3.0..=40.0).text("gap_px (cut width)"));
+            ui.add(Slider::new(&mut self.gap_px, 16.0..=100.0).text("gap_px (cut width)"));
 
             ui.separator();
             match self.mode {
@@ -97,11 +97,11 @@ impl eframe::App for MyApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let broken_cfg = match self.mode {
-                1 => Some(BrokenXAxis::new(
+                1 => Some(SegmentedAxis::new(
                     vec![Interval::new(0.0, 200.0), Interval::new(800.0, 1000.0)],
                     self.gap_px,
                 )),
-                2 => Some(BrokenXAxis::new(
+                2 => Some(SegmentedAxis::new(
                     vec![
                         Interval::new(0.0, 200.0),
                         Interval::new(800.0, 1500.0),
@@ -109,7 +109,7 @@ impl eframe::App for MyApp {
                     ],
                     self.gap_px,
                 )),
-                3 => Some(BrokenXAxis::new(
+                3 => Some(SegmentedAxis::new(
                     vec![
                         Interval::new(0.0, 200.0),
                         Interval::new(800.0, 820.0),
