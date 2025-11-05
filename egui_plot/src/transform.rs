@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 
 use egui::{Pos2, Rect, Vec2, Vec2b, pos2, remap};
 
-use crate::{Axis, broken_axis::BrokenXAxis};
+use crate::{Axis, segmented_axis::SegmentedAxis};
 
 use super::PlotPoint;
 
@@ -277,7 +277,7 @@ pub struct PlotTransform {
     /// Whether to always center the x-range or y-range of the bounds.
     centered: Vec2b,
 
-    broken_xaxis: Option<BrokenXAxis>,
+    broken_xaxis: Option<SegmentedAxis>,
 
     pixels_per_x: f32,
 }
@@ -289,8 +289,15 @@ impl PlotTransform {
             "Bad plot frame: {frame:?}"
         );
         let center_axis = center_axis.into();
-
+        // Since the current Y bounds an affect the final X bounds and vice versa, we need to keep
+        // the original version of the `bounds` before we start modifying it.
         let mut new_bounds = bounds;
+
+        // Sanitize bounds.
+        //
+        // When a given bound axis is "thin" (e.g. width or height is 0) but finite, we center the
+        // bounds around that value. If the other axis is "fat", we reuse its extent for the thin
+        // axis, and default to +/- 1.0 otherwise.
 
         if !bounds.is_finite_x() {
             new_bounds.set_x(&PlotBounds::new_symmetrical(1.0));
@@ -343,7 +350,7 @@ impl PlotTransform {
     }
 
     /// Enable broken-x layout on this transform. Call this after constructing with `new()`.
-    pub fn with_broken_xaxis(mut self, broken: BrokenXAxis) -> Self {
+    pub fn with_broken_xaxis(mut self, broken: SegmentedAxis) -> Self {
         if let Some(first) = broken.segments.first() {
             let seg_len = first.len().max(f64::EPSILON) as f32;
 
@@ -515,6 +522,8 @@ impl PlotTransform {
 
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
+            // Don't make any changes when the aspect is already almost correct.
+
             return;
         }
 
@@ -537,6 +546,8 @@ impl PlotTransform {
 
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
+            // Don't make any changes when the aspect is already almost correct.
+
             return;
         }
 
@@ -557,7 +568,7 @@ impl PlotTransform {
     }
 
     /// Map data.x -> screen.x under a broken/stitched x-axis definition.
-    fn position_from_point_x_broken(&self, x: f64, bx: &BrokenXAxis) -> f32 {
+    fn position_from_point_x_broken(&self, x: f64, bx: &SegmentedAxis) -> f32 {
         let mut cursor_px = self.frame.left();
 
         for (i, seg) in bx.segments.iter().enumerate() {
@@ -583,7 +594,7 @@ impl PlotTransform {
         cursor_px
     }
     #[inline]
-    pub fn broken_xaxis(&self) -> Option<&BrokenXAxis> {
+    pub fn broken_xaxis(&self) -> Option<&SegmentedAxis> {
         self.broken_xaxis.as_ref()
     }
     pub fn is_x_in_visible_segments(&self, x: f64) -> bool {
@@ -601,7 +612,7 @@ impl PlotTransform {
     /// Inverse of `position_from_point_x_broken`: screen.x -> data.x.
     ///
     /// Not 1:1 in gaps. Inside a gap we snap to the end of the segment to the left.
-    fn value_from_position_x_broken(&self, sx: f32, bx: &BrokenXAxis) -> f64 {
+    fn value_from_position_x_broken(&self, sx: f32, bx: &SegmentedAxis) -> f64 {
         let mut cursor_px = self.frame.left();
 
         for (i, seg) in bx.segments.iter().enumerate() {
@@ -645,7 +656,7 @@ impl PlotTransform {
         }
     }
 
-    pub fn set_broken_xaxis(&mut self, broken: Option<BrokenXAxis>) {
+    pub fn set_broken_xaxis(&mut self, broken: Option<SegmentedAxis>) {
         self.broken_xaxis = broken;
 
         if let Some(bx) = &self.broken_xaxis {
