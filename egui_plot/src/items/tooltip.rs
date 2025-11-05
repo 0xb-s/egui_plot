@@ -191,15 +191,14 @@ impl PlotUi<'_> {
         let ctx = self.ctx().clone();
         let visuals = ctx.style().visuals.clone();
         let transform = self.transform().clone();
-        let binding = transform.clone();
-        let frame = binding.frame();
+        let frame = transform.frame();
 
         // Draw existing pins (rails + markers) on a foreground layer:
         let mut pins = load_pins(&ctx, self.response.id);
         draw_pins_overlay(
             &ctx,
             &pins,
-            &transform.clone(),
+            &transform,
             *frame,
             &visuals,
             options.marker_radius,
