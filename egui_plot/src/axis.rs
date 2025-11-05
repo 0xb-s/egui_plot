@@ -236,7 +236,7 @@ impl<'a> AxisWidget<'a> {
         let Some(ref transform) = self.transform else {
             return (response, 0.0);
         };
-        let tick_labels_thickness = self.add_tick_labels(ui, &transform.clone(), axis);
+        let tick_labels_thickness = self.add_tick_labels(ui, transform, axis);
 
         if self.hints.label.is_empty() {
             return (response, tick_labels_thickness);
@@ -473,15 +473,15 @@ fn estimate_step_hint_data_units(transform: &PlotTransform) -> f64 {
     (units_per_px.abs() * desired_px_spacing) as f64
 }
 #[derive(Clone, Copy, Debug)]
-pub struct ScreenTick {
-    pub world_x: f64,
-    pub screen_x: f32,
-    pub is_segment_edge: bool,
+struct ScreenTick {
+    world_x: f64,
+    screen_x: f32,
+    is_segment_edge: bool,
 }
 
-pub fn compute_broken_x_ticks(
+fn compute_broken_x_ticks(
     tf: &PlotTransform,
-    bx: &crate::BrokenXAxis,
+    bx: &crate::SegmentedAxis,
     step_hint: f64,
 ) -> Vec<ScreenTick> {
     let per_seg_ticks = bx.segment_ticks(step_hint);
