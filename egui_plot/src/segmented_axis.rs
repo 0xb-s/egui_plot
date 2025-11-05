@@ -1,16 +1,16 @@
 use crate::Interval;
 
-/// Declarative layout for a "broken" X axis:
+/// Declarative layout for a segmented axis:
 /// - `segments` are the visible data ranges, in order.
 /// - `gap_px` is the visual gap (in screen points) drawn between them.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-pub struct BrokenXAxis {
+pub struct SegmentedAxis {
     pub segments: Vec<Interval>,
     pub gap_px: f32,
 }
 
-impl BrokenXAxis {
+impl SegmentedAxis {
     /// Create and sanitize (sort, drop empties, merge overlaps).
     pub fn new(mut segments: Vec<Interval>, gap_px: f32) -> Self {
         // 1. drop bad/empty/non-finite segments
@@ -52,6 +52,7 @@ impl BrokenXAxis {
         for seg in &self.segments {
             let lo = seg.start;
             let hi = seg.end;
+
             if !lo.is_finite() || !hi.is_finite() || hi <= lo {
                 out.push(Vec::new());
                 continue;
@@ -64,17 +65,27 @@ impl BrokenXAxis {
             let nice = nice_step(raw_step);
 
             let start_tick = (lo / nice).ceil() * nice;
-            let mut ticks = Vec::new();
-            let mut t = start_tick;
-            while t <= hi + f64::EPSILON {
+            let end_tick = (hi / nice).floor() * nice;
+
+            // Compute the number of steps safely
+            let steps = (((end_tick - start_tick) / nice).round() as i64).max(0);
+
+            let mut ticks = Vec::with_capacity((steps + 3) as usize);
+            let mut i = 0i64;
+            loop {
+                let t = start_tick + (i as f64) * nice;
+                if t > hi + f64::EPSILON {
+                    break;
+                }
                 ticks.push(t);
-                t += nice;
+                i += 1;
             }
 
-            if !ticks.contains(&lo) {
+            // Ensure endpoints are included
+            if (ticks.first().copied() != Some(lo)) && lo.is_finite() {
                 ticks.insert(0, lo);
             }
-            if !ticks.contains(&hi) {
+            if (ticks.last().copied() != Some(hi)) && hi.is_finite() {
                 ticks.push(hi);
             }
 
