@@ -10,12 +10,12 @@
 #![allow(deprecated)]
 mod axis;
 mod bound;
-mod broken_axis;
 mod collect_events;
 mod items;
 mod legend;
 mod memory;
 mod plot_ui;
+mod segmented_axis;
 mod span;
 mod span_utils;
 mod transform;
@@ -25,7 +25,7 @@ pub use crate::action::PlotEvent;
 pub use crate::action::{ActionExecutor, ActionQueue};
 pub use crate::action::{BoundsChangeCause, InputInfo, PinSnapshot};
 
-pub use crate::broken_axis::BrokenXAxis;
+pub use crate::segmented_axis::SegmentedAxis;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
@@ -212,7 +212,7 @@ pub struct Plot<'a> {
 
     sense: Sense,
 
-    broken_x_axis: Option<BrokenXAxis>,
+    segmented_x_axis: Option<SegmentedAxis>,
 }
 
 impl<'a> Plot<'a> {
@@ -262,11 +262,11 @@ impl<'a> Plot<'a> {
 
             sense: egui::Sense::click_and_drag(),
 
-            broken_x_axis: None,
+            segmented_x_axis: None,
         }
     }
-    pub fn broken_x_axis(mut self, broken: Option<BrokenXAxis>) -> Self {
-        self.broken_x_axis = broken;
+    pub fn broken_x_axis(mut self, broken: Option<SegmentedAxis>) -> Self {
+        self.segmented_x_axis = broken;
         self
     }
     /// Set an explicit (global) id for the plot.
@@ -844,7 +844,7 @@ impl<'a> Plot<'a> {
             clamp_grid,
             grid_spacers,
             sense,
-            broken_x_axis,
+            segmented_x_axis,
         } = self;
 
         // Disable interaction if ui is disabled.
@@ -953,7 +953,7 @@ impl<'a> Plot<'a> {
             y_axis_thickness: Default::default(),
         });
 
-        let last_plot_transform = mem.transform.clone();
+        let last_plot_transform = mem.transform;
         // Call the plot build function.
         let mut plot_ui = PlotUi {
             ctx: ui.ctx().clone(),
@@ -1114,7 +1114,7 @@ impl<'a> Plot<'a> {
         // Build transform
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
 
-        mem.transform.set_broken_xaxis(broken_x_axis.clone());
+        mem.transform.set_broken_xaxis(segmented_x_axis);
 
         // Aspect
         if let Some(data_aspect) = data_aspect {
@@ -1412,7 +1412,7 @@ impl<'a> Plot<'a> {
         }
         // Initialize values from functions.
         for item in &mut items {
-            item.initialize(mem.transform.clone().bounds().range_x());
+            item.initialize(mem.transform.bounds().range_x());
         }
 
         // Draw items/grid/tooltip
