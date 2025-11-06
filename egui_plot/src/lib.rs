@@ -265,8 +265,8 @@ impl<'a> Plot<'a> {
             segmented_x_axis: None,
         }
     }
-    pub fn broken_x_axis(mut self, broken: Option<SegmentedAxis>) -> Self {
-        self.segmented_x_axis = broken;
+    pub fn segmented_x_axis(mut self, segmented: Option<SegmentedAxis>) -> Self {
+        self.segmented_x_axis = segmented;
         self
     }
     /// Set an explicit (global) id for the plot.
@@ -1114,7 +1114,7 @@ impl<'a> Plot<'a> {
         // Build transform
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
 
-        mem.transform.set_broken_xaxis(segmented_x_axis);
+        mem.transform.set_segment_xaxis(segmented_x_axis);
 
         // Aspect
         if let Some(data_aspect) = data_aspect {
