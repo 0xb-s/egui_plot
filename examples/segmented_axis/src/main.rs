@@ -123,7 +123,7 @@ impl eframe::App for MyApp {
             Plot::new("plot_broken_x_multi")
                 .allow_zoom(true)
                 .allow_scroll(true)
-                .broken_x_axis(broken_cfg)
+                .segmented_x_axis(broken_cfg)
                 .show(ui, |plot_ui| {
                     plot_ui.line(
                         Line::new_xy("data", &self.xs, &self.ys)
