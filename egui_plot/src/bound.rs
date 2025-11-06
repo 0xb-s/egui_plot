@@ -12,15 +12,27 @@ pub struct Interval {
 
 impl Interval {
     pub fn len(&self) -> f64 {
-        if self.start.is_infinite() && self.end.is_infinite() {
+        let start_inf = self.start.is_infinite();
+        let end_inf = self.end.is_infinite();
+
+     
+        if start_inf && end_inf {
+            // (-∞, +∞)
             if self.start.is_sign_negative() && self.end.is_sign_positive() {
-                f64::INFINITY
-            } else {
-                0.0
+                return f64::INFINITY;
             }
-        } else {
-            (self.end - self.start).max(0.0)
+
+            // (+∞, +∞) or (-∞, -∞)
+            return 0.0;
         }
+
+     
+        if start_inf || end_inf {
+            return f64::INFINITY;
+        }
+
+      
+        (self.end - self.start).max(0.0)
     }
 
     /// Create a new interval from two endpoints.
