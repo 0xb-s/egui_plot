@@ -985,7 +985,7 @@ impl PlotItem for Line<'_> {
             fill = None;
         }
         // segmented part here
-        if let Some(bx) = transform.broken_xaxis() {
+        if let Some(bx) = transform.segment_xaxis() {
             // 1) helper: draw the fill for a run
             let draw_fill_for_run = |i0: usize, i1: usize, shapes: &mut Vec<Shape>| {
                 if i1 < i0 {
