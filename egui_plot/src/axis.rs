@@ -295,15 +295,15 @@ impl<'a> AxisWidget<'a> {
         (response, tick_labels_thickness + axis_label_thickness)
     }
 
-    /// Add tick labels to the axis.
+    /// Add tick labels to the axis. Returns the thickness of the axis.
     fn add_tick_labels(&self, ui: &Ui, transform: &PlotTransform, axis: Axis) -> f32 {
         let font_id = TextStyle::Body.resolve(ui.style());
         let label_spacing = self.hints.label_spacing;
         let mut thickness: f32 = 0.0;
 
-        const SIDE_MARGIN: f32 = 4.0;
+        const SIDE_MARGIN: f32 = 4.0; // Add some margin to both sides of the text on the Y axis.
         let painter = ui.painter();
-
+        // Add tick labels:
         if axis == Axis::X {
             if let Some(bx) = transform.segment_xaxis() {
                 let text_color = ui.visuals().text_color();
