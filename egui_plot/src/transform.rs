@@ -277,7 +277,7 @@ pub struct PlotTransform {
     /// Whether to always center the x-range or y-range of the bounds.
     centered: Vec2b,
 
-    broken_xaxis: Option<SegmentedAxis>,
+    segmented_xaxis: Option<SegmentedAxis>,
 
     pixels_per_x: f32,
 }
@@ -344,19 +344,19 @@ impl PlotTransform {
             frame,
             bounds: new_bounds,
             centered: center_axis,
-            broken_xaxis: None,
+            segmented_xaxis: None,
             pixels_per_x,
         }
     }
 
-    /// Enable broken-x layout on this transform. Call this after constructing with `new()`.
-    pub fn with_broken_xaxis(mut self, broken: SegmentedAxis) -> Self {
-        if let Some(first) = broken.segments.first() {
+    /// Enable segmented-x layout on this transform. Call this after constructing with `new()`.
+    pub fn with_segmented_xaxis(mut self, segmented: SegmentedAxis) -> Self {
+        if let Some(first) = segmented.segments.first() {
             let seg_len = first.len().max(f64::EPSILON) as f32;
 
             self.pixels_per_x = self.frame.width() / seg_len;
         }
-        self.broken_xaxis = Some(broken);
+        self.segmented_xaxis = Some(segmented);
         self
     }
 
@@ -375,8 +375,8 @@ impl PlotTransform {
     #[inline]
     pub fn set_bounds(&mut self, bounds: PlotBounds) {
         self.bounds = bounds;
-        // update pixels_per_x if we are *not* in broken mode
-        if self.broken_xaxis.is_none() {
+        // update pixels_per_x if we are *not* in segment mode
+        if self.segmented_xaxis.is_none() {
             self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
         }
     }
@@ -404,7 +404,7 @@ impl PlotTransform {
             self.bounds = new_bounds;
 
             // keep pixels_per_x in sync ONLY if we are in normal mode
-            if self.broken_xaxis.is_none() {
+            if self.segmented_xaxis.is_none() {
                 self.pixels_per_x =
                     self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
             }
@@ -413,8 +413,8 @@ impl PlotTransform {
 
     /// X mapping: data.x -> screen.x
     pub fn position_from_point_x(&self, value: f64) -> f32 {
-        if let Some(bx) = &self.broken_xaxis {
-            return self.position_from_point_x_broken(value, bx);
+        if let Some(bx) = &self.segmented_xaxis {
+            return self.position_from_point_x_segment(value, bx);
         }
 
         remap(
@@ -443,11 +443,11 @@ impl PlotTransform {
 
     /// Plot point from screen/ui position.
     ///
-    /// NOTE: in broken-x mode, X inverse is not 1:1 inside gaps. We snap gaps
+    /// NOTE: in segment-x mode, X inverse is not 1:1 inside gaps. We snap gaps
     /// to the end of the previous segment.
     pub fn value_from_position(&self, pos: Pos2) -> PlotPoint {
-        let x = if let Some(bx) = &self.broken_xaxis {
-            self.value_from_position_x_broken(pos.x, bx)
+        let x = if let Some(bx) = &self.segmented_xaxis {
+            self.value_from_position_x_segment(pos.x, bx)
         } else {
             remap(
                 pos.x as f64,
@@ -481,8 +481,8 @@ impl PlotTransform {
 
     /// delta position / delta value = how many ui points per step in the X axis in "plot space"
     pub fn dpos_dvalue_x(&self) -> f64 {
-        if self.broken_xaxis.is_some() {
-            // In broken mode, horizontal scale isn't global linear anymore.
+        if self.segmented_xaxis.is_some() {
+            // In segment mode, horizontal scale isn't global linear anymore.
             // We expose the baseline pixels_per_x.
             self.pixels_per_x as f64
         } else {
@@ -535,7 +535,7 @@ impl PlotTransform {
                 .expand_y((current_aspect / aspect - 1.0) * self.bounds.height() * 0.5);
         }
 
-        if self.broken_xaxis.is_none() {
+        if self.segmented_xaxis.is_none() {
             self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
         }
     }
@@ -562,13 +562,13 @@ impl PlotTransform {
             }
         }
 
-        if self.broken_xaxis.is_none() {
+        if self.segmented_xaxis.is_none() {
             self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
         }
     }
 
-    /// Map data.x -> screen.x under a broken/stitched x-axis definition.
-    fn position_from_point_x_broken(&self, x: f64, bx: &SegmentedAxis) -> f32 {
+    /// Map data.x -> screen.x under a segment/stitched x-axis definition.
+    fn position_from_point_x_segment(&self, x: f64, bx: &SegmentedAxis) -> f32 {
         let mut cursor_px = self.frame.left();
 
         for (i, seg) in bx.segments.iter().enumerate() {
@@ -594,11 +594,11 @@ impl PlotTransform {
         cursor_px
     }
     #[inline]
-    pub fn broken_xaxis(&self) -> Option<&SegmentedAxis> {
-        self.broken_xaxis.as_ref()
+    pub fn segment_xaxis(&self) -> Option<&SegmentedAxis> {
+        self.segmented_xaxis.as_ref()
     }
     pub fn is_x_in_visible_segments(&self, x: f64) -> bool {
-        if let Some(bx) = &self.broken_xaxis {
+        if let Some(bx) = &self.segmented_xaxis {
             for seg in &bx.segments {
                 if x >= seg.start && x <= seg.end {
                     return true;
@@ -609,10 +609,10 @@ impl PlotTransform {
             true
         }
     }
-    /// Inverse of `position_from_point_x_broken`: screen.x -> data.x.
+    /// Inverse of `position_from_point_x_segment`: screen.x -> data.x.
     ///
     /// Not 1:1 in gaps. Inside a gap we snap to the end of the segment to the left.
-    fn value_from_position_x_broken(&self, sx: f32, bx: &SegmentedAxis) -> f64 {
+    fn value_from_position_x_segment(&self, sx: f32, bx: &SegmentedAxis) -> f64 {
         let mut cursor_px = self.frame.left();
 
         for (i, seg) in bx.segments.iter().enumerate() {
@@ -656,10 +656,10 @@ impl PlotTransform {
         }
     }
 
-    pub fn set_broken_xaxis(&mut self, broken: Option<SegmentedAxis>) {
-        self.broken_xaxis = broken;
+    pub fn set_segment_xaxis(&mut self, segment: Option<SegmentedAxis>) {
+        self.segmented_xaxis = segment;
 
-        if let Some(bx) = &self.broken_xaxis {
+        if let Some(bx) = &self.segmented_xaxis {
             let n = bx.segments.len();
 
             let total_len: f64 = bx
