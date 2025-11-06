@@ -15,6 +15,7 @@ mod items;
 mod legend;
 mod memory;
 mod plot_ui;
+mod segmented_axis;
 mod span;
 mod span_utils;
 mod transform;
@@ -24,6 +25,7 @@ pub use crate::action::PlotEvent;
 pub use crate::action::{ActionExecutor, ActionQueue};
 pub use crate::action::{BoundsChangeCause, InputInfo, PinSnapshot};
 
+pub use crate::segmented_axis::SegmentedAxis;
 pub use crate::{
     axis::{Axis, AxisHints, HPlacement, Placement, VPlacement},
     items::{
@@ -209,6 +211,8 @@ pub struct Plot<'a> {
     clamp_grid: bool,
 
     sense: Sense,
+
+    segmented_x_axis: Option<SegmentedAxis>,
 }
 
 impl<'a> Plot<'a> {
@@ -257,9 +261,14 @@ impl<'a> Plot<'a> {
             clamp_grid: false,
 
             sense: egui::Sense::click_and_drag(),
+
+            segmented_x_axis: None,
         }
     }
-
+    pub fn segmented_x_axis(mut self, segmented: Option<SegmentedAxis>) -> Self {
+        self.segmented_x_axis = segmented;
+        self
+    }
     /// Set an explicit (global) id for the plot.
     ///
     /// This will override the id set by [`Self::new`].
@@ -835,6 +844,7 @@ impl<'a> Plot<'a> {
             clamp_grid,
             grid_spacers,
             sense,
+            segmented_x_axis,
         } = self;
 
         // Disable interaction if ui is disabled.
@@ -1103,6 +1113,8 @@ impl<'a> Plot<'a> {
 
         // Build transform
         mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
+
+        mem.transform.set_segment_xaxis(segmented_x_axis);
 
         // Aspect
         if let Some(data_aspect) = data_aspect {
@@ -1386,14 +1398,14 @@ impl<'a> Plot<'a> {
 
         for (i, mut widget) in x_axis_widgets.into_iter().enumerate() {
             widget.range = x_axis_range.clone();
-            widget.transform = Some(mem.transform);
+            widget.transform = Some(mem.transform.clone());
             widget.steps = x_steps.clone();
             let (_response, thickness) = widget.ui(ui, Axis::X);
             mem.x_axis_thickness.insert(i, thickness);
         }
         for (i, mut widget) in y_axis_widgets.into_iter().enumerate() {
             widget.range = y_axis_range.clone();
-            widget.transform = Some(mem.transform);
+            widget.transform = Some(mem.transform.clone());
             widget.steps = y_steps.clone();
             let (_response, thickness) = widget.ui(ui, Axis::Y);
             mem.y_axis_thickness.insert(i, thickness);
@@ -1413,7 +1425,7 @@ impl<'a> Plot<'a> {
             coordinates_formatter,
             show_grid,
             grid_spacing,
-            transform: mem.transform,
+            transform: mem.transform.clone(),
             draw_cursor_x: linked_cursors.as_ref().is_some_and(|g| g.1.x),
             draw_cursor_y: linked_cursors.as_ref().is_some_and(|g| g.1.y),
             draw_cursors,
@@ -1484,7 +1496,7 @@ impl<'a> Plot<'a> {
             });
         }
 
-        let transform = mem.transform;
+        let transform = mem.transform.clone();
         mem.store(ui.ctx(), plot_id);
 
         response = if show_x || show_y {

@@ -20,6 +20,10 @@ pub struct PlotUi<'a> {
 }
 
 impl<'a> PlotUi<'a> {
+    #[inline]
+    pub fn set_segmented_x_axis(&mut self, segment: Option<crate::SegmentedAxis>) {
+        self.last_plot_transform.set_segment_xaxis(segment);
+    }
     pub fn take_actions(self) -> ActionQueue<Box<dyn PlotItem + 'a>> {
         self.actions
     }

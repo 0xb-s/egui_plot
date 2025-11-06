@@ -36,8 +36,8 @@ pub struct PlotMemory {
 
 impl PlotMemory {
     #[inline]
-    pub fn transform(&self) -> PlotTransform {
-        self.transform
+    pub fn transform(&self) -> &PlotTransform {
+        &self.transform
     }
 
     #[inline]

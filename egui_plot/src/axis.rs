@@ -233,7 +233,7 @@ impl<'a> AxisWidget<'a> {
             return (response, 0.0);
         }
 
-        let Some(transform) = self.transform else {
+        let Some(ref transform) = self.transform else {
             return (response, 0.0);
         };
         let tick_labels_thickness = self.add_tick_labels(ui, transform, axis);
@@ -296,15 +296,98 @@ impl<'a> AxisWidget<'a> {
     }
 
     /// Add tick labels to the axis. Returns the thickness of the axis.
-    fn add_tick_labels(&self, ui: &Ui, transform: PlotTransform, axis: Axis) -> f32 {
+    fn add_tick_labels(&self, ui: &Ui, transform: &PlotTransform, axis: Axis) -> f32 {
         let font_id = TextStyle::Body.resolve(ui.style());
         let label_spacing = self.hints.label_spacing;
         let mut thickness: f32 = 0.0;
 
         const SIDE_MARGIN: f32 = 4.0; // Add some margin to both sides of the text on the Y axis.
         let painter = ui.painter();
-
         // Add tick labels:
+        if axis == Axis::X {
+            if let Some(bx) = transform.segment_xaxis() {
+                let text_color = ui.visuals().text_color();
+
+                let step_hint = estimate_step_hint_data_units(transform);
+
+                let raw_ticks = compute_segmented_x_ticks(transform, bx, step_hint);
+
+                const CLUSTER_PX_THRESHOLD: f32 = 6.0;
+                let clusters = cluster_overlapping_ticks(raw_ticks, CLUSTER_PX_THRESHOLD);
+
+                let mut last_drawn_center_x: Option<f32> = None;
+                let mut thickness: f32 = 0.0;
+
+                for cluster in clusters {
+                    if !cluster.has_edge {
+                        if let Some(prev_cx) = last_drawn_center_x {
+                            if (cluster.screen_x - prev_cx).abs() < self.hints.label_spacing.min {
+                                continue;
+                            }
+                        }
+                    }
+
+                    let mut inner = cluster.ticks.clone();
+                    inner.sort_by(|a, b| {
+                        a.world_x
+                            .partial_cmp(&b.world_x)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    let to_draw: Vec<(ScreenTick, TickSide)> = if inner.len() == 1 {
+                        vec![(inner[0], TickSide::Center)]
+                    } else {
+                        vec![
+                            (inner.first().copied().expect(""), TickSide::Left),
+                            (inner.last().copied().expect(""), TickSide::Right),
+                        ]
+                    };
+
+                    for (tick, side) in to_draw {
+                        let gm = GridMark {
+                            value: tick.world_x,
+                            step_size: step_hint,
+                        };
+                        let txt = (self.hints.formatter)(gm, &self.range);
+                        if txt.is_empty() {
+                            continue;
+                        }
+
+                        let galley = painter.layout_no_wrap(txt, font_id.clone(), text_color);
+                        let galley_size = galley.size();
+
+                        let y = match VPlacement::from(self.hints.placement) {
+                            VPlacement::Bottom => self.rect.min.y,
+                            VPlacement::Top => self.rect.max.y - galley_size.y,
+                        };
+
+                        let label_pos_x = match side {
+                            TickSide::Center => tick.screen_x - galley_size.x * 0.5,
+                            TickSide::Left => tick.screen_x - galley_size.x - 2.0,
+                            TickSide::Right => tick.screen_x + 2.0,
+                        };
+
+                        let label_pos = Pos2::new(label_pos_x, y);
+
+                        if label_pos.x + galley_size.x < self.rect.min.x {
+                            continue;
+                        }
+                        if label_pos.x > self.rect.max.x {
+                            continue;
+                        }
+
+                        painter.add(TextShape::new(label_pos, galley, text_color));
+
+                        thickness = thickness.max(galley_size.y);
+                    }
+
+                    last_drawn_center_x = Some(cluster.screen_x);
+                }
+
+                return thickness;
+            }
+        }
+
         for step in self.steps.iter() {
             let text = (self.hints.formatter)(*step, &self.range);
             if !text.is_empty() {
@@ -379,6 +462,108 @@ impl<'a> AxisWidget<'a> {
                 };
             }
         }
+
         thickness
     }
+}
+fn estimate_step_hint_data_units(transform: &PlotTransform) -> f64 {
+    let desired_px_spacing: f32 = 80.0;
+
+    let units_per_px = transform.dvalue_dpos()[0] as f32;
+    (units_per_px.abs() * desired_px_spacing) as f64
+}
+#[derive(Clone, Copy, Debug)]
+struct ScreenTick {
+    world_x: f64,
+    screen_x: f32,
+    is_segment_edge: bool,
+}
+
+fn compute_segmented_x_ticks(
+    tf: &PlotTransform,
+    bx: &crate::SegmentedAxis,
+    step_hint: f64,
+) -> Vec<ScreenTick> {
+    let per_seg_ticks = bx.segment_ticks(step_hint);
+
+    let mut out = Vec::new();
+
+    for (seg_idx, ticks_for_seg) in per_seg_ticks.iter().enumerate() {
+        let seg = &bx.segments[seg_idx];
+
+        for &world_x in ticks_for_seg {
+            if !world_x.is_finite() {
+                continue;
+            }
+
+            let screen_x = tf.position_from_point_x(world_x);
+
+            if !screen_x.is_finite() {
+                continue;
+            }
+
+            out.push(ScreenTick {
+                world_x,
+                screen_x,
+                is_segment_edge: (world_x == seg.start) || (world_x == seg.end),
+            });
+        }
+    }
+
+    out.sort_by(|a, b| {
+        a.screen_x
+            .partial_cmp(&b.screen_x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    out
+}
+#[derive(Clone)]
+struct TickCluster {
+    pub screen_x: f32,
+    pub ticks: Vec<ScreenTick>,
+    pub has_edge: bool,
+}
+
+fn cluster_overlapping_ticks(
+    mut ticks: Vec<ScreenTick>,
+    px_merge_threshold: f32,
+) -> Vec<TickCluster> {
+    ticks.sort_by(|a, b| {
+        a.screen_x
+            .partial_cmp(&b.screen_x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut clusters: Vec<TickCluster> = Vec::new();
+    let mut i = 0;
+
+    while i < ticks.len() {
+        let base_x = ticks[i].screen_x;
+
+        let mut group: Vec<ScreenTick> = vec![ticks[i]];
+        i += 1;
+
+        while i < ticks.len() && (ticks[i].screen_x - base_x).abs() < px_merge_threshold {
+            group.push(ticks[i]);
+            i += 1;
+        }
+
+        let has_edge = group.iter().any(|t| t.is_segment_edge);
+
+        clusters.push(TickCluster {
+            screen_x: base_x,
+            ticks: group,
+            has_edge,
+        });
+    }
+
+    clusters
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TickSide {
+    Left,
+    Right,
+    Center,
 }

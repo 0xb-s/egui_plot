@@ -695,7 +695,7 @@ impl PlotItem for Line<'_> {
         // if we have a gradient color, we need to wrap the stroke callback to transpose the position to a value
         // the caller can reason about
         if let Some(callback) = gradient_color.clone() {
-            let local_tf = *transform;
+            let local_tf = transform.clone();
             let wrapped =
                 move |_r: Rect, p: Pos2| -> Color32 { callback(local_tf.value_from_position(p)) };
             final_stroke = PathStroke::new_uv(stroke.width, wrapped);
@@ -967,6 +967,7 @@ impl PlotItem for Line<'_> {
         if len < 1 {
             return; // nothing to draw
         }
+
         //todo try to move this to helper
         //outside of this function
         let get_pos = |i: usize| -> Pos2 {
@@ -983,6 +984,194 @@ impl PlotItem for Line<'_> {
         if len < 2 {
             fill = None;
         }
+        // segmented part here
+        if let Some(bx) = transform.segment_xaxis() {
+            // 1) helper: draw the fill for a run
+            let draw_fill_for_run = |i0: usize, i1: usize, shapes: &mut Vec<Shape>| {
+                if i1 < i0 {
+                    return;
+                }
+                let chunk_len = i1 + 1 - i0;
+                if chunk_len < 2 {
+                    return;
+                }
+
+                if let Some(y_reference) = fill {
+                    let mut fill_alpha = *self_fill_alpha;
+                    if base.highlight {
+                        fill_alpha = (2.0 * fill_alpha).at_most(1.0);
+                    }
+
+                    let y_line = transform
+                        .position_from_point(&PlotPoint::new(0.0, y_reference))
+                        .y;
+
+                    let mut fill_color: Color32 = Rgba::from(stroke.color)
+                        .to_opaque()
+                        .multiply(fill_alpha)
+                        .into();
+
+                    let mut mesh = Mesh::default();
+                    let expected_intersections = 20;
+                    mesh.reserve_triangles(chunk_len.saturating_sub(1) * 2);
+                    mesh.reserve_vertices(chunk_len * 2 + expected_intersections);
+
+                    let mut p0 = get_pos(i0);
+                    for idx in i0..i1 {
+                        let p1 = get_pos(idx + 1);
+
+                        if *gradient_fill {
+                            if let Some(grad) = gradient_color.as_ref() {
+                                fill_color = Rgba::from(grad(transform.value_from_position(p1)))
+                                    .to_opaque()
+                                    .multiply(fill_alpha)
+                                    .into();
+                            }
+                        }
+
+                        let base_idx = mesh.vertices.len() as u32;
+                        mesh.colored_vertex(p0, fill_color);
+                        mesh.colored_vertex(pos2(p0.x, y_line), fill_color);
+
+                        if let Some(xi) = y_intersection(&p0, &p1, y_line) {
+                            let xp = pos2(xi, y_line);
+                            mesh.colored_vertex(xp, fill_color);
+                            mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+
+                            mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                            mesh.colored_vertex(p1, fill_color);
+                            mesh.add_triangle(base_idx + 2, base_idx + 3, base_idx + 4);
+                        } else {
+                            mesh.colored_vertex(p1, fill_color);
+                            mesh.colored_vertex(pos2(p1.x, y_line), fill_color);
+                            mesh.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+                            mesh.add_triangle(base_idx + 1, base_idx + 2, base_idx + 3);
+                        }
+
+                        p0 = p1;
+                    }
+
+                    let last = get_pos(i1);
+                    mesh.colored_vertex(last, fill_color);
+                    mesh.colored_vertex(pos2(last.x, y_line), fill_color);
+
+                    shapes.push(Shape::Mesh(std::sync::Arc::new(mesh)));
+                }
+            };
+
+            // 2) helper: draw stroke for a run
+            let draw_stroke_for_run = |i0: usize, i1: usize, shapes: &mut Vec<Shape>| {
+                let chunk_len = i1 + 1 - i0;
+                if chunk_len < 2 {
+                    return;
+                }
+
+                let draw_stroke = final_stroke.width > 0.0
+                    && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+
+                if draw_stroke {
+                    let mut scratch: Vec<Pos2> = Vec::new();
+                    style.style_line_iter(
+                        (i0..=i1).map(&get_pos),
+                        final_stroke.clone(),
+                        base.highlight,
+                        shapes,
+                        &mut scratch,
+                    );
+                }
+            };
+
+            // 3) helper: draw markers for a run
+            let draw_markers_for_run = |i0: usize, i1: usize, shapes: &mut Vec<Shape>| {
+                let Some(marker) = &self.markers else {
+                    return;
+                };
+
+                let auto_fallback = if stroke.color == Color32::TRANSPARENT {
+                    _ui.visuals().text_color()
+                } else {
+                    stroke.color
+                };
+
+                match src {
+                    Src::Col { xs, ys } => {
+                        for k in i0..=i1 {
+                            let pp = PlotPoint { x: xs[k], y: ys[k] };
+                            let pos = transform.position_from_point(&pp);
+                            let color = resolve_marker_color(
+                                marker,
+                                auto_fallback,
+                                pp,
+                                gradient_color.as_ref(),
+                            );
+                            draw_one_marker(marker, pos, color, base.highlight, shapes);
+                        }
+                    }
+                    Src::Legacy { pts } => {
+                        for &pp in &pts[i0..=i1] {
+                            let pos = transform.position_from_point(&pp);
+                            let color = resolve_marker_color(
+                                marker,
+                                auto_fallback,
+                                pp,
+                                gradient_color.as_ref(),
+                            );
+                            draw_one_marker(marker, pos, color, base.highlight, shapes);
+                        }
+                    }
+                    Src::Empty => {}
+                }
+            };
+
+            // 4) helper: draw one run using all 3 helpers
+            let draw_run = |i0: usize, i1: usize, shapes: &mut Vec<Shape>| {
+                if i1 < i0 {
+                    return;
+                }
+                draw_fill_for_run(i0, i1, shapes);
+                draw_stroke_for_run(i0, i1, shapes);
+                draw_markers_for_run(i0, i1, shapes);
+            };
+
+            // 5) walk segments
+            for seg in &bx.segments {
+                let mut run_start: Option<usize> = None;
+                let mut last_in: usize = 0;
+
+                for i in 0..len {
+                    let (x_val, finite_ok) = match src {
+                        Src::Col { xs, ys } => {
+                            let x = xs[i];
+                            let y = ys[i];
+                            (x, x.is_finite() && y.is_finite())
+                        }
+                        Src::Legacy { pts } => {
+                            let p = pts[i];
+                            (p.x, p.x.is_finite() && p.y.is_finite())
+                        }
+                        Src::Empty => unreachable!(),
+                    };
+
+                    let inside = finite_ok && seg.contains(x_val);
+
+                    if inside {
+                        if run_start.is_none() {
+                            run_start = Some(i);
+                        }
+                        last_in = i;
+                    } else if let Some(s0) = run_start.take() {
+                        draw_run(s0, last_in, shapes);
+                    }
+                }
+
+                if let Some(s0) = run_start.take() {
+                    draw_run(s0, last_in, shapes);
+                }
+            }
+
+            return;
+        }
+        //return;
 
         if let Some(y_reference) = fill {
             let mut fill_alpha = *self_fill_alpha;
