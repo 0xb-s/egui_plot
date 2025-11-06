@@ -41,12 +41,38 @@ impl SegmentedAxis {
         }
     }
 
-    /// Return true if we effectively have a broken axis (2+ segments).
+    /// Return true if we effectively have a segmented axis (2+ segments).
     #[inline]
     pub fn is_multi_segment(&self) -> bool {
         self.segments.len() > 1
     }
     pub fn segment_ticks(&self, step_hint: f64) -> Vec<Vec<f64>> {
+        let mut max_raw_step = 0.0;
+
+        for seg in &self.segments {
+            let lo = seg.start;
+            let hi = seg.end;
+
+            if !lo.is_finite() || !hi.is_finite() || hi <= lo {
+                continue;
+            }
+
+            let span = hi - lo;
+
+            let approx_steps = (span / step_hint.max(f64::EPSILON)).max(1.0);
+            let raw_step = span / approx_steps;
+
+            if raw_step > max_raw_step {
+                max_raw_step = raw_step;
+            }
+        }
+
+        if max_raw_step == 0.0 {
+            return vec![Vec::new(); self.segments.len()];
+        }
+
+        let nice = nice_step(max_raw_step);
+
         let mut out: Vec<Vec<f64>> = Vec::with_capacity(self.segments.len());
 
         for seg in &self.segments {
@@ -58,19 +84,13 @@ impl SegmentedAxis {
                 continue;
             }
 
-            let span = hi - lo;
-            let approx_steps = (span / step_hint.max(f64::EPSILON)).max(1.0);
-            let raw_step = span / approx_steps;
-
-            let nice = nice_step(raw_step);
-
             let start_tick = (lo / nice).ceil() * nice;
+
             let end_tick = (hi / nice).floor() * nice;
 
-            // Compute the number of steps safely
             let steps = (((end_tick - start_tick) / nice).round() as i64).max(0);
-
             let mut ticks = Vec::with_capacity((steps + 3) as usize);
+
             let mut i = 0i64;
             loop {
                 let t = start_tick + (i as f64) * nice;
@@ -81,11 +101,10 @@ impl SegmentedAxis {
                 i += 1;
             }
 
-            // Ensure endpoints are included
-            if (ticks.first().copied() != Some(lo)) && lo.is_finite() {
+            if ticks.first().copied() != Some(lo) {
                 ticks.insert(0, lo);
             }
-            if (ticks.last().copied() != Some(hi)) && hi.is_finite() {
+            if ticks.last().copied() != Some(hi) {
                 ticks.push(hi);
             }
 
