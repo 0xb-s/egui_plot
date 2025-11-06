@@ -305,12 +305,12 @@ impl<'a> AxisWidget<'a> {
         let painter = ui.painter();
 
         if axis == Axis::X {
-            if let Some(bx) = transform.broken_xaxis() {
+            if let Some(bx) = transform.segment_xaxis() {
                 let text_color = ui.visuals().text_color();
 
                 let step_hint = estimate_step_hint_data_units(transform);
 
-                let raw_ticks = compute_broken_x_ticks(transform, bx, step_hint);
+                let raw_ticks = compute_segmented_x_ticks(transform, bx, step_hint);
 
                 const CLUSTER_PX_THRESHOLD: f32 = 6.0;
                 let clusters = cluster_overlapping_ticks(raw_ticks, CLUSTER_PX_THRESHOLD);
@@ -479,7 +479,7 @@ struct ScreenTick {
     is_segment_edge: bool,
 }
 
-fn compute_broken_x_ticks(
+fn compute_segmented_x_ticks(
     tf: &PlotTransform,
     bx: &crate::SegmentedAxis,
     step_hint: f64,
