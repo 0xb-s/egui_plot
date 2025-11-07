@@ -151,9 +151,18 @@ impl<'a> AxisHints<'a> {
 
     fn default_formatter(mark: GridMark, _range: &RangeInclusive<f64>) -> String {
         // Example: If the step to the next tick is `0.01`, we should use 2 decimals of precision:
-        let num_decimals = -mark.step_size.log10().round() as usize;
-
-        emath::format_with_decimals_in_range(mark.value, num_decimals..=num_decimals)
+        let mut num_decimals = (-mark.step_size.log10().round()) as isize;
+        #[allow(clippy::manual_clamp)]
+        if num_decimals < 0 {
+            num_decimals = 0;
+        }
+        if num_decimals > 10 {
+            num_decimals = 10;
+        }
+        emath::format_with_decimals_in_range(
+            mark.value,
+            num_decimals as usize..=num_decimals as usize,
+        )
     }
 
     /// Specify axis label.
@@ -306,22 +315,20 @@ impl<'a> AxisWidget<'a> {
         // Add tick labels:
         if axis == Axis::X {
             if let Some(bx) = transform.segment_xaxis() {
-                let text_color = ui.visuals().text_color();
-
-                let step_hint = estimate_step_hint_data_units(transform);
-
-                let raw_ticks = compute_segmented_x_ticks(transform, bx, step_hint);
+                const DESIRED_PX: f32 = 80.0;
+                let raw_ticks = compute_segmented_x_ticks_per_segment(transform, bx, DESIRED_PX);
 
                 const CLUSTER_PX_THRESHOLD: f32 = 6.0;
                 let clusters = cluster_overlapping_ticks(raw_ticks, CLUSTER_PX_THRESHOLD);
 
+                let text_color = ui.visuals().text_color();
                 let mut last_drawn_center_x: Option<f32> = None;
                 let mut thickness: f32 = 0.0;
 
                 for cluster in clusters {
                     if !cluster.has_edge {
-                        if let Some(prev_cx) = last_drawn_center_x {
-                            if (cluster.screen_x - prev_cx).abs() < self.hints.label_spacing.min {
+                        if let Some(prev) = last_drawn_center_x {
+                            if (cluster.screen_x - prev).abs() < self.hints.label_spacing.min {
                                 continue;
                             }
                         }
@@ -346,7 +353,7 @@ impl<'a> AxisWidget<'a> {
                     for (tick, side) in to_draw {
                         let gm = GridMark {
                             value: tick.world_x,
-                            step_size: step_hint,
+                            step_size: tick.step_size,
                         };
                         let txt = (self.hints.formatter)(gm, &self.range);
                         if txt.is_empty() {
@@ -368,7 +375,6 @@ impl<'a> AxisWidget<'a> {
                         };
 
                         let label_pos = Pos2::new(label_pos_x, y);
-
                         if label_pos.x + galley_size.x < self.rect.min.x {
                             continue;
                         }
@@ -377,7 +383,6 @@ impl<'a> AxisWidget<'a> {
                         }
 
                         painter.add(TextShape::new(label_pos, galley, text_color));
-
                         thickness = thickness.max(galley_size.y);
                     }
 
@@ -466,58 +471,15 @@ impl<'a> AxisWidget<'a> {
         thickness
     }
 }
-fn estimate_step_hint_data_units(transform: &PlotTransform) -> f64 {
-    let desired_px_spacing: f32 = 80.0;
 
-    let units_per_px = transform.dvalue_dpos()[0] as f32;
-    (units_per_px.abs() * desired_px_spacing) as f64
-}
 #[derive(Clone, Copy, Debug)]
 struct ScreenTick {
     world_x: f64,
     screen_x: f32,
+    step_size: f64,
     is_segment_edge: bool,
 }
 
-fn compute_segmented_x_ticks(
-    tf: &PlotTransform,
-    bx: &crate::SegmentedAxis,
-    step_hint: f64,
-) -> Vec<ScreenTick> {
-    let per_seg_ticks = bx.segment_ticks(step_hint);
-
-    let mut out = Vec::new();
-
-    for (seg_idx, ticks_for_seg) in per_seg_ticks.iter().enumerate() {
-        let seg = &bx.segments[seg_idx];
-
-        for &world_x in ticks_for_seg {
-            if !world_x.is_finite() {
-                continue;
-            }
-
-            let screen_x = tf.position_from_point_x(world_x);
-
-            if !screen_x.is_finite() {
-                continue;
-            }
-
-            out.push(ScreenTick {
-                world_x,
-                screen_x,
-                is_segment_edge: (world_x == seg.start) || (world_x == seg.end),
-            });
-        }
-    }
-
-    out.sort_by(|a, b| {
-        a.screen_x
-            .partial_cmp(&b.screen_x)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    out
-}
 #[derive(Clone)]
 struct TickCluster {
     pub screen_x: f32,
@@ -566,4 +528,65 @@ enum TickSide {
     Left,
     Right,
     Center,
+}
+fn compute_segmented_x_ticks_per_segment(
+    tf: &PlotTransform,
+    bx: &crate::SegmentedAxis,
+    desired_px: f32,
+) -> Vec<ScreenTick> {
+    let mut out = Vec::new();
+
+    for seg in &bx.segments {
+        let sx0 = tf.position_from_point_x(seg.start);
+        let sx1 = tf.position_from_point_x(seg.end);
+        let seg_px = (sx1 - sx0).abs().max(1.0);
+        let seg_len = seg.end - seg.start;
+
+        let n_steps = (seg_px / desired_px).ceil().max(1.0) as i32;
+
+        if n_steps <= 1 {
+            let step_size = seg_len.abs().max(1e-6);
+            out.push(ScreenTick {
+                world_x: seg.start,
+                screen_x: sx0,
+                step_size,
+                is_segment_edge: true,
+            });
+            out.push(ScreenTick {
+                world_x: seg.end,
+                screen_x: sx1,
+                step_size,
+                is_segment_edge: true,
+            });
+            continue;
+        }
+
+        let step = (seg_len / n_steps as f64).abs().max(1e-6);
+
+        for i in 0..=n_steps {
+            let world_x = seg.start + (step * i as f64).copysign(seg_len);
+            let screen_x = tf.position_from_point_x(world_x);
+            if !screen_x.is_finite() {
+                continue;
+            }
+
+            let is_edge = (world_x - seg.start).abs() < f64::EPSILON
+                || (world_x - seg.end).abs() < f64::EPSILON;
+
+            out.push(ScreenTick {
+                world_x,
+                screen_x,
+                step_size: step,
+                is_segment_edge: is_edge,
+            });
+        }
+    }
+
+    out.sort_by(|a, b| {
+        a.screen_x
+            .partial_cmp(&b.screen_x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    out
 }
