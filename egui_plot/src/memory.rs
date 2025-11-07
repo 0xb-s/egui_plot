@@ -32,6 +32,8 @@ pub struct PlotMemory {
     /// in order to fit the labels, if necessary.
     pub(crate) x_axis_thickness: BTreeMap<usize, f32>,
     pub(crate) y_axis_thickness: BTreeMap<usize, f32>,
+
+    pub(crate) segmented_x_offset: f64,
 }
 
 impl PlotMemory {
@@ -39,12 +41,20 @@ impl PlotMemory {
     pub fn transform(&self) -> &PlotTransform {
         &self.transform
     }
-
     #[inline]
-    pub fn set_transform(&mut self, t: PlotTransform) {
+    pub fn set_transform(&mut self, mut t: PlotTransform) {
+        if t.segment_xaxis().is_some() {
+            t.set_segment_x_offset(self.segmented_x_offset);
+        }
         self.transform = t;
     }
 
+    #[inline]
+    pub fn update_segmented_x_offset_from_transform(&mut self) {
+        if self.transform.segment_xaxis().is_some() {
+            self.segmented_x_offset = self.transform.segment_x_offset();
+        }
+    }
     /// Plot-space bounds.
     #[inline]
     pub fn bounds(&self) -> &PlotBounds {
