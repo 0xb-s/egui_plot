@@ -1068,11 +1068,73 @@ impl PlotItem for Line<'_> {
 
                 let draw_stroke = final_stroke.width > 0.0
                     && final_stroke.color != egui::epaint::ColorMode::Solid(Color32::TRANSPARENT);
+                if !draw_stroke {
+                    return;
+                }
 
-                if draw_stroke {
-                    let mut scratch: Vec<Pos2> = Vec::new();
+               
+                let dx_per_px = transform.dvalue_dpos()[0].abs() as f32;
+               
+                let dx_per_px = if dx_per_px > 0.0 { dx_per_px } else { 1.0 };
+
+                
+                let max_jump_px = bx.gap_px;
+
+                let mut scratch: Vec<Pos2> = Vec::new();
+                let mut current: Vec<Pos2> = Vec::new();
+
+             
+                let mut last_screen: Option<Pos2> = None;
+                let mut last_x: Option<f64> = None;
+
+                for idx in i0..=i1 {
+                    // screen pos
+                    let p = get_pos(idx);
+
+                 
+                    let x_val = match src {
+                        Src::Col { xs, .. } => xs[idx],
+                        Src::Legacy { pts } => pts[idx].x,
+                        Src::Empty => unreachable!(),
+                    };
+
+                
+                    let mut break_here = false;
+                    if let (Some(prev_p), Some(prev_x)) = (last_screen, last_x) {
+                      
+                        let screen_jump = (p.x - prev_p.x).abs();
+
+                       
+                        let data_gap = (x_val - prev_x).abs() as f32;
+                        let natural_px_gap = data_gap / dx_per_px;
+
+                        if screen_jump > max_jump_px * 0.9 || natural_px_gap > max_jump_px * 0.9 {
+                            break_here = true;
+                        }
+                    }
+
+                    if break_here {
+                        if current.len() > 1 {
+                            style.style_line_iter(
+                                current.iter().copied(),
+                                final_stroke.clone(),
+                                base.highlight,
+                                shapes,
+                                &mut scratch,
+                            );
+                        }
+                        current.clear();
+                    }
+
+                    current.push(p);
+                    last_screen = Some(p);
+                    last_x = Some(x_val);
+                }
+
+              
+                if current.len() > 1 {
                     style.style_line_iter(
-                        (i0..=i1).map(&get_pos),
+                        current.into_iter(),
                         final_stroke.clone(),
                         base.highlight,
                         shapes,
