@@ -280,6 +280,8 @@ pub struct PlotTransform {
     segmented_xaxis: Option<SegmentedAxis>,
 
     pixels_per_x: f32,
+
+    segment_x_offset: f64,
 }
 
 impl PlotTransform {
@@ -341,6 +343,7 @@ impl PlotTransform {
         let pixels_per_x = frame.width() / (new_bounds.width() as f32).max(f32::EPSILON);
 
         Self {
+            segment_x_offset: 0.0,
             frame,
             bounds: new_bounds,
             centered: center_axis,
@@ -351,12 +354,7 @@ impl PlotTransform {
 
     /// Enable segmented-x layout on this transform. Call this after constructing with `new()`.
     pub fn with_segmented_xaxis(mut self, segmented: SegmentedAxis) -> Self {
-        if let Some(first) = segmented.segments.first() {
-            let seg_len = first.len().max(f64::EPSILON) as f32;
-
-            self.pixels_per_x = self.frame.width() / seg_len;
-        }
-        self.segmented_xaxis = Some(segmented);
+        self.set_segment_xaxis(Some(segmented));
         self
     }
 
@@ -382,15 +380,37 @@ impl PlotTransform {
     }
 
     pub fn translate_bounds(&mut self, mut delta_pos: (f64, f64)) {
+        let [dx_per_px, dy_per_px] = self.dvalue_dpos();
+
+        // x
         if self.centered.x {
-            delta_pos.0 = 0.;
+            delta_pos.0 = 0.0;
+        } else if self.segmented_xaxis.is_some() {
+            let dx_world = delta_pos.0 * dx_per_px;
+
+            if dx_world.is_finite() && dx_world != 0.0 {
+                self.segment_x_offset += dx_world;
+                self.bounds.translate_x(dx_world);
+            }
+            delta_pos.0 = 0.0;
+        } else {
+            let dx_world = delta_pos.0 * dx_per_px;
+            if dx_world.is_finite() && dx_world != 0.0 {
+                self.bounds.translate_x(dx_world);
+            }
+            delta_pos.0 = 0.0;
         }
+
+        // y
         if self.centered.y {
-            delta_pos.1 = 0.;
+            delta_pos.1 = 0.0;
+        } else {
+            let dy_world = delta_pos.1 * dy_per_px;
+            if dy_world.is_finite() && dy_world != 0.0 {
+                self.bounds.translate_y(dy_world);
+            }
+            delta_pos.1 = 0.0;
         }
-        delta_pos.0 *= self.dvalue_dpos()[0];
-        delta_pos.1 *= self.dvalue_dpos()[1];
-        self.bounds.translate((delta_pos.0, delta_pos.1));
     }
 
     /// Zoom by a relative factor with the given screen position as center.
@@ -398,12 +418,18 @@ impl PlotTransform {
         let center = self.value_from_position(center);
 
         let mut new_bounds = self.bounds;
-        new_bounds.zoom(zoom_factor, center);
+
+        if self.segmented_xaxis.is_some() {
+            // In segmented-x mode, only zoom Y.
+            new_bounds.min[1] = center.y + (new_bounds.min[1] - center.y) / (zoom_factor.y as f64);
+            new_bounds.max[1] = center.y + (new_bounds.max[1] - center.y) / (zoom_factor.y as f64);
+        } else {
+            new_bounds.zoom(zoom_factor, center);
+        }
 
         if new_bounds.is_valid() {
             self.bounds = new_bounds;
 
-            // keep pixels_per_x in sync ONLY if we are in normal mode
             if self.segmented_xaxis.is_none() {
                 self.pixels_per_x =
                     self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
@@ -518,12 +544,14 @@ impl PlotTransform {
     ///
     /// This never contracts, so we don't miss out on any data.
     pub(crate) fn set_aspect_by_expanding(&mut self, aspect: f64) {
-        let current_aspect = self.aspect();
+        if self.segmented_xaxis.is_some() {
+            // X is controlled by segments; don't touch it here.
+            return;
+        }
 
+        let current_aspect = self.aspect();
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
-            // Don't make any changes when the aspect is already almost correct.
-
             return;
         }
 
@@ -535,19 +563,17 @@ impl PlotTransform {
                 .expand_y((current_aspect / aspect - 1.0) * self.bounds.height() * 0.5);
         }
 
-        if self.segmented_xaxis.is_none() {
-            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
-        }
+        self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
     }
 
-    /// Sets the aspect ratio by changing either the X or Y axis (callers choice).
     pub(crate) fn set_aspect_by_changing_axis(&mut self, aspect: f64, axis: Axis) {
-        let current_aspect = self.aspect();
+        if self.segmented_xaxis.is_some() {
+            return;
+        }
 
+        let current_aspect = self.aspect();
         let epsilon = 1e-5;
         if (current_aspect - aspect).abs() < epsilon {
-            // Don't make any changes when the aspect is already almost correct.
-
             return;
         }
 
@@ -562,15 +588,14 @@ impl PlotTransform {
             }
         }
 
-        if self.segmented_xaxis.is_none() {
-            self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
-        }
+        self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
     }
 
     /// Map data.x -> screen.x under a segment/stitched x-axis definition.
     fn position_from_point_x_segment(&self, x: f64, bx: &SegmentedAxis) -> f32 {
-        let mut cursor_px = self.frame.left();
+        let x = x - self.segment_x_offset;
 
+        let mut cursor_px = self.frame.left();
         for (i, seg) in bx.segments.iter().enumerate() {
             let seg_len = seg.len();
             let seg_px = (seg_len as f32) * self.pixels_per_x;
@@ -585,14 +610,13 @@ impl PlotTransform {
             }
 
             cursor_px += seg_px;
-
             if i + 1 < bx.segments.len() {
                 cursor_px += bx.gap_px;
             }
         }
-
         cursor_px
     }
+
     #[inline]
     pub fn segment_xaxis(&self) -> Option<&SegmentedAxis> {
         self.segmented_xaxis.as_ref()
@@ -628,7 +652,8 @@ impl PlotTransform {
                 } else {
                     0.0
                 };
-                return seg.start + (t as f64) * seg.len();
+                // add back the pan offset in data space
+                return seg.start + (t as f64) * seg.len() + self.segment_x_offset;
             }
 
             cursor_px += seg_px;
@@ -638,7 +663,7 @@ impl PlotTransform {
                 let gap_end_px = cursor_px + bx.gap_px;
 
                 if sx >= gap_start_px && sx <= gap_end_px {
-                    return seg.end;
+                    return seg.end + self.segment_x_offset;
                 }
 
                 cursor_px += bx.gap_px;
@@ -646,7 +671,7 @@ impl PlotTransform {
         }
 
         if let Some(last) = bx.segments.last() {
-            last.end
+            last.end + self.segment_x_offset
         } else {
             remap(
                 sx as f64,
@@ -657,32 +682,35 @@ impl PlotTransform {
     }
 
     pub fn set_segment_xaxis(&mut self, segment: Option<SegmentedAxis>) {
+        let prev_offset = self.segment_x_offset;
         self.segmented_xaxis = segment;
 
         if let Some(bx) = &self.segmented_xaxis {
-            let n = bx.segments.len();
+            // keep previous pan
+            self.segment_x_offset = prev_offset;
 
-            let total_len: f64 = bx
-                .segments
-                .iter()
-                .map(|seg| seg.len().max(f64::EPSILON)) // avoid 0
-                .sum();
-
-            let total_gap_px: f32 = if n >= 2 {
-                bx.gap_px * ((n as u32).saturating_sub(1)) as f32
+            let seg_count = bx.segments.len();
+            let total_len: f64 = bx.segments.iter().map(|s| s.len().max(f64::EPSILON)).sum();
+            let total_gap_px: f32 = if seg_count >= 2 {
+                bx.gap_px * ((seg_count as u32).saturating_sub(1)) as f32
             } else {
                 0.0
             };
-
-            let usable_px = (self.frame.width()) - total_gap_px;
-
-            let usable_px = usable_px.max(1.0);
-
-            let scale = usable_px / (total_len as f32).max(f32::EPSILON);
-
-            self.pixels_per_x = scale;
+            let usable_px = (self.frame.width() - total_gap_px).max(1.0);
+            self.pixels_per_x = usable_px / (total_len as f32).max(f32::EPSILON);
         } else {
+            self.segment_x_offset = 0.0;
             self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
         }
+    }
+
+    #[inline]
+    pub fn segment_x_offset(&self) -> f64 {
+        self.segment_x_offset
+    }
+
+    #[inline]
+    pub fn set_segment_x_offset(&mut self, offset: f64) {
+        self.segment_x_offset = offset;
     }
 }
