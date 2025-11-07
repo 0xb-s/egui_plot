@@ -951,9 +951,10 @@ impl<'a> Plot<'a> {
             last_click_pos_for_zoom: None,
             x_axis_thickness: Default::default(),
             y_axis_thickness: Default::default(),
+            segmented_x_offset: 0.0,
         });
 
-        let last_plot_transform = mem.transform;
+        let last_plot_transform = mem.transform.clone();
         // Call the plot build function.
         let mut plot_ui = PlotUi {
             ctx: ui.ctx().clone(),
@@ -1112,10 +1113,11 @@ impl<'a> Plot<'a> {
         }
 
         // Build transform
-        mem.transform = PlotTransform::new(plot_rect, bounds, center_axis);
 
-        mem.transform.set_segment_xaxis(segmented_x_axis);
+        let mut new_tf = PlotTransform::new(plot_rect, bounds, center_axis);
+        new_tf.set_segment_xaxis(segmented_x_axis);
 
+        mem.set_transform(new_tf);
         // Aspect
         if let Some(data_aspect) = data_aspect {
             if let Some((_, linked_axes)) = &linked_axes {
@@ -1167,6 +1169,9 @@ impl<'a> Plot<'a> {
 
             mem.transform
                 .translate_bounds((delta.x as f64, delta.y as f64));
+            if mem.transform.segment_xaxis().is_some() {
+                mem.segmented_x_offset = mem.transform.segment_x_offset();
+            }
             mem.auto_bounds = mem.auto_bounds.and(!allow_drag);
             last_user_cause = Some(BoundsChangeCause::Pan);
 
@@ -1497,6 +1502,12 @@ impl<'a> Plot<'a> {
         }
 
         let transform = mem.transform.clone();
+
+        // if segmented, remember the offset we ended up with this frame
+        if mem.transform.segment_xaxis().is_some() {
+            mem.segmented_x_offset = mem.transform.segment_x_offset();
+        }
+
         mem.store(ui.ctx(), plot_id);
 
         response = if show_x || show_y {
