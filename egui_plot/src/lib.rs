@@ -55,7 +55,7 @@ use emath::Float as _;
 use axis::AxisWidget;
 use items::{horizontal_line, rulers_color, vertical_line};
 use legend::LegendWidget;
-
+use egui::pos2;
 type LabelFormatterFn<'a> = dyn Fn(&str, &PlotPoint) -> String + 'a;
 pub type LabelFormatter<'a> = Option<Box<LabelFormatterFn<'a>>>;
 
