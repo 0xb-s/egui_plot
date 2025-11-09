@@ -1436,6 +1436,18 @@ impl<'a> Plot<'a> {
 
         let (plot_cursors, mut hovered_plot_item) = prepared.ui(ui, &response);
 
+        if let Some(gaps) = mem.transform.segment_x_gap_screen_ranges() {
+            let frame = mem.transform.frame();
+            let gap_color = ui.visuals().extreme_bg_color;
+            for (left, right) in gaps {
+                let gap_rect =
+                    Rect::from_min_max(pos2(left, frame.top()), pos2(right, frame.bottom()));
+                ui.painter()
+                    .with_clip_rect(*frame)
+                    .add(egui::Shape::rect_filled(gap_rect, 0.0, gap_color));
+            }
+        }
+
         // Click/Context menu -> events
         if response.clicked() {
             events.push(PlotEvent::Activate {
