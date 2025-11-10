@@ -280,6 +280,8 @@ pub struct PlotTransform {
     segmented_xaxis: Option<SegmentedAxis>,
 
     pixels_per_x: f32,
+
+    segment_x_offset: f32,
 }
 
 impl PlotTransform {
@@ -346,6 +348,7 @@ impl PlotTransform {
             centered: center_axis,
             segmented_xaxis: None,
             pixels_per_x,
+            segment_x_offset: 0.0,
         }
     }
 
@@ -458,7 +461,7 @@ impl PlotTransform {
 
         let y = remap(
             pos.y as f64,
-            (self.frame.bottom() as f64)..=(self.frame.top() as f64), // negated y axis!
+            (self.frame.bottom() as f64)..=(self.frame.top() as f64),
             self.bounds.range_y(),
         );
 
@@ -569,7 +572,7 @@ impl PlotTransform {
 
     /// Map data.x -> screen.x under a segment/stitched x-axis definition.
     fn position_from_point_x_segment(&self, x: f64, bx: &SegmentedAxis) -> f32 {
-        let mut cursor_px = self.frame.left();
+        let mut cursor_px = self.frame.left() + self.segment_x_offset;
 
         for (i, seg) in bx.segments.iter().enumerate() {
             let seg_len = seg.len();
@@ -613,7 +616,7 @@ impl PlotTransform {
     ///
     /// Not 1:1 in gaps. Inside a gap we snap to the end of the segment to the left.
     fn value_from_position_x_segment(&self, sx: f32, bx: &SegmentedAxis) -> f64 {
-        let mut cursor_px = self.frame.left();
+        let mut cursor_px = self.frame.left() + self.segment_x_offset;
 
         for (i, seg) in bx.segments.iter().enumerate() {
             let seg_len = seg.len();
@@ -638,22 +641,14 @@ impl PlotTransform {
                 let gap_end_px = cursor_px + bx.gap_px;
 
                 if sx >= gap_start_px && sx <= gap_end_px {
-                    return seg.end;
+                    return f64::NAN;
                 }
 
                 cursor_px += bx.gap_px;
             }
         }
 
-        if let Some(last) = bx.segments.last() {
-            last.end
-        } else {
-            remap(
-                sx as f64,
-                (self.frame.left() as f64)..=(self.frame.right() as f64),
-                self.bounds.range_x(),
-            )
-        }
+        f64::NAN
     }
 
     pub fn set_segment_xaxis(&mut self, segment: Option<SegmentedAxis>) {
@@ -683,6 +678,22 @@ impl PlotTransform {
             self.pixels_per_x = scale;
         } else {
             self.pixels_per_x = self.frame.width() / (self.bounds.width() as f32).max(f32::EPSILON);
+            self.segment_x_offset = 0.0;
         }
+    }
+
+    #[inline]
+    pub fn segment_x_offset(&self) -> f32 {
+        self.segment_x_offset
+    }
+
+    #[inline]
+    pub fn set_segment_x_offset(&mut self, off: f32) {
+        self.segment_x_offset = off;
+    }
+
+    #[inline]
+    pub fn translate_segment_offset(&mut self, dx_screen: f32) {
+        self.segment_x_offset += dx_screen;
     }
 }
