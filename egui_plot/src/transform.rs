@@ -681,6 +681,26 @@ impl PlotTransform {
             self.segment_x_offset = 0.0;
         }
     }
+    pub fn segment_x_gap_screen_ranges(&self) -> Option<Vec<(f32, f32)>> {
+        let bx = self.segment_xaxis()?;
+        let mut out = Vec::new();
+
+        let mut cursor_px = self.frame.left() + self.segment_x_offset;
+
+        for (i, seg) in bx.segments.iter().enumerate() {
+            let seg_px = (seg.len() as f32) * self.pixels_per_x;
+            cursor_px += seg_px;
+
+            if i + 1 < bx.segments.len() {
+                let gap_left = cursor_px;
+                let gap_right = cursor_px + bx.gap_px;
+                out.push((gap_left, gap_right));
+                cursor_px += bx.gap_px;
+            }
+        }
+
+        Some(out)
+    }
 
     #[inline]
     pub fn segment_x_offset(&self) -> f32 {
