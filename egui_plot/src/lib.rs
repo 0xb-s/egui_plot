@@ -1116,6 +1116,12 @@ impl<'a> Plot<'a> {
 
         mem.transform.set_segment_xaxis(segmented_x_axis);
 
+        if last_plot_transform.segment_xaxis().is_some() && mem.transform.segment_xaxis().is_some()
+        {
+            mem.transform
+                .set_segment_x_offset(last_plot_transform.segment_x_offset());
+        }
+
         // Aspect
         if let Some(data_aspect) = data_aspect {
             if let Some((_, linked_axes)) = &linked_axes {
@@ -1165,8 +1171,14 @@ impl<'a> Plot<'a> {
                 },
             });
 
-            mem.transform
-                .translate_bounds((delta.x as f64, delta.y as f64));
+            if mem.transform.segment_xaxis().is_some() {
+                mem.transform.translate_segment_offset(-delta.x);
+
+                mem.transform.translate_bounds((0.0, delta.y as f64));
+            } else {
+                mem.transform
+                    .translate_bounds((delta.x as f64, delta.y as f64));
+            }
             mem.auto_bounds = mem.auto_bounds.and(!allow_drag);
             last_user_cause = Some(BoundsChangeCause::Pan);
 
@@ -1369,8 +1381,14 @@ impl<'a> Plot<'a> {
                     scroll.y = 0.0;
                 }
                 if scroll != Vec2::ZERO {
-                    mem.transform
-                        .translate_bounds((-scroll.x as f64, -scroll.y as f64));
+                    if mem.transform.segment_xaxis().is_some() {
+                        mem.transform.translate_segment_offset(-scroll.x);
+
+                        mem.transform.translate_bounds((0.0, -scroll.y as f64));
+                    } else {
+                        mem.transform
+                            .translate_bounds((-scroll.x as f64, -scroll.y as f64));
+                    }
                     mem.auto_bounds = false.into();
                 }
             }
