@@ -461,7 +461,7 @@ impl PlotTransform {
 
         let y = remap(
             pos.y as f64,
-            (self.frame.bottom() as f64)..=(self.frame.top() as f64), // negated y axis!
+            (self.frame.bottom() as f64)..=(self.frame.top() as f64),
             self.bounds.range_y(),
         );
 
@@ -641,22 +641,14 @@ impl PlotTransform {
                 let gap_end_px = cursor_px + bx.gap_px;
 
                 if sx >= gap_start_px && sx <= gap_end_px {
-                    return seg.end;
+                    return f64::NAN;
                 }
 
                 cursor_px += bx.gap_px;
             }
         }
 
-        if let Some(last) = bx.segments.last() {
-            last.end
-        } else {
-            remap(
-                sx as f64,
-                (self.frame.left() as f64)..=(self.frame.right() as f64),
-                self.bounds.range_x(),
-            )
-        }
+        f64::NAN
     }
 
     pub fn set_segment_xaxis(&mut self, segment: Option<SegmentedAxis>) {
