@@ -2,8 +2,7 @@ use std::{fmt::Debug, ops::RangeInclusive, sync::Arc};
 
 use egui::{
     Pos2, Rangef, Rect, Response, Sense, TextStyle, TextWrapMode, Ui, Vec2, WidgetText,
-    emath::{Rot2, remap_clamp},
-    epaint::TextShape,
+    emath::remap_clamp, epaint::TextShape,
 };
 
 use super::{GridMark, transform::PlotTransform};
@@ -299,95 +298,54 @@ impl<'a> AxisWidget<'a> {
     fn add_tick_labels(&self, ui: &Ui, transform: &PlotTransform, axis: Axis) -> f32 {
         let font_id = TextStyle::Body.resolve(ui.style());
         let label_spacing = self.hints.label_spacing;
-        let mut thickness: f32 = 0.0;
 
         const SIDE_MARGIN: f32 = 4.0; // Add some margin to both sides of the text on the Y axis.
         let painter = ui.painter();
+
         // Add tick labels:
         if axis == Axis::X {
             if let Some(bx) = transform.segment_xaxis() {
                 let text_color = ui.visuals().text_color();
 
-                let step_hint = estimate_step_hint_data_units(transform);
+                let raw_ticks = build_segmented_ticks_from_steps(transform, bx, &self.steps);
+                let ticks = cluster_ticks_for_labels(raw_ticks, label_spacing.min);
 
-                let raw_ticks = compute_segmented_x_ticks(transform, bx, step_hint);
-
-                const CLUSTER_PX_THRESHOLD: f32 = 6.0;
-                let clusters = cluster_overlapping_ticks(raw_ticks, CLUSTER_PX_THRESHOLD);
-
-                let mut last_drawn_center_x: Option<f32> = None;
                 let mut thickness: f32 = 0.0;
 
-                for cluster in clusters {
-                    if !cluster.has_edge {
-                        if let Some(prev_cx) = last_drawn_center_x {
-                            if (cluster.screen_x - prev_cx).abs() < self.hints.label_spacing.min {
-                                continue;
-                            }
-                        }
-                    }
-
-                    let mut inner = cluster.ticks.clone();
-                    inner.sort_by(|a, b| {
-                        a.world_x
-                            .partial_cmp(&b.world_x)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-
-                    let to_draw: Vec<(ScreenTick, TickSide)> = if inner.len() == 1 {
-                        vec![(inner[0], TickSide::Center)]
-                    } else {
-                        vec![
-                            (inner.first().copied().expect(""), TickSide::Left),
-                            (inner.last().copied().expect(""), TickSide::Right),
-                        ]
+                for tick in ticks {
+                    let gm = GridMark {
+                        value: tick.world_x,
+                        step_size: tick.step_size,
                     };
 
-                    for (tick, side) in to_draw {
-                        let gm = GridMark {
-                            value: tick.world_x,
-                            step_size: step_hint,
-                        };
-                        let txt = (self.hints.formatter)(gm, &self.range);
-                        if txt.is_empty() {
-                            continue;
-                        }
-
-                        let galley = painter.layout_no_wrap(txt, font_id.clone(), text_color);
-                        let galley_size = galley.size();
-
-                        let y = match VPlacement::from(self.hints.placement) {
-                            VPlacement::Bottom => self.rect.min.y,
-                            VPlacement::Top => self.rect.max.y - galley_size.y,
-                        };
-
-                        let label_pos_x = match side {
-                            TickSide::Center => tick.screen_x - galley_size.x * 0.5,
-                            TickSide::Left => tick.screen_x - galley_size.x - 2.0,
-                            TickSide::Right => tick.screen_x + 2.0,
-                        };
-
-                        let label_pos = Pos2::new(label_pos_x, y);
-
-                        if label_pos.x + galley_size.x < self.rect.min.x {
-                            continue;
-                        }
-                        if label_pos.x > self.rect.max.x {
-                            continue;
-                        }
-
-                        painter.add(TextShape::new(label_pos, galley, text_color));
-
-                        thickness = thickness.max(galley_size.y);
+                    let txt = (self.hints.formatter)(gm, &self.range);
+                    if txt.is_empty() {
+                        continue;
                     }
 
-                    last_drawn_center_x = Some(cluster.screen_x);
+                    let galley = painter.layout_no_wrap(txt, font_id.clone(), text_color);
+                    let galley_size = galley.size();
+
+                    let y = match VPlacement::from(self.hints.placement) {
+                        VPlacement::Bottom => self.rect.min.y,
+                        VPlacement::Top => self.rect.max.y - galley_size.y,
+                    };
+
+                    let x = tick.screen_x - galley_size.x * 0.5;
+
+                    if x + galley_size.x < self.rect.min.x || x > self.rect.max.x {
+                        continue;
+                    }
+
+                    painter.add(TextShape::new(Pos2::new(x, y), galley, text_color));
+                    thickness = thickness.max(galley_size.y);
                 }
 
                 return thickness;
             }
         }
 
+        let mut thickness: f32 = 0.0;
         for step in self.steps.iter() {
             let text = (self.hints.formatter)(*step, &self.range);
             if !text.is_empty() {
@@ -396,10 +354,11 @@ impl<'a> AxisWidget<'a> {
 
                 if spacing_in_points <= label_spacing.min {
                     // Labels are too close together - don't paint them.
+
                     continue;
                 }
-
                 // Fade in labels as they get further apart:
+
                 let strength = remap_clamp(spacing_in_points, label_spacing, 0.0..=1.0);
 
                 let text_color = super::color_from_strength(ui, strength);
@@ -416,7 +375,6 @@ impl<'a> AxisWidget<'a> {
                 match axis {
                     Axis::X => {
                         thickness = thickness.max(galley_size.y);
-
                         let projected_point = super::PlotPoint::new(step.value, 0.0);
                         let center_x = transform.position_from_point(&projected_point).x;
                         let y = match VPlacement::from(self.hints.placement) {
@@ -428,29 +386,14 @@ impl<'a> AxisWidget<'a> {
                     }
                     Axis::Y => {
                         thickness = thickness.max(galley_size.x);
-
                         let projected_point = super::PlotPoint::new(0.0, step.value);
                         let center_y = transform.position_from_point(&projected_point).y;
 
                         match HPlacement::from(self.hints.placement) {
                             HPlacement::Left => {
-                                let angle = 0.0; // TODO(emilk): allow users to rotate text
-
-                                if angle == 0.0 {
-                                    let x = self.rect.max.x - galley_size.x + SIDE_MARGIN;
-                                    let pos = Pos2::new(x, center_y - galley_size.y / 2.0);
-                                    painter.add(TextShape::new(pos, galley, text_color));
-                                } else {
-                                    let right =
-                                        Pos2::new(self.rect.max.x, center_y - galley_size.y / 2.0);
-                                    let width = galley_size.x;
-                                    let left =
-                                        right - Rot2::from_angle(angle) * Vec2::new(width, 0.0);
-
-                                    painter.add(
-                                        TextShape::new(left, galley, text_color).with_angle(angle),
-                                    );
-                                }
+                                let x = self.rect.max.x - galley_size.x + SIDE_MARGIN;
+                                let pos = Pos2::new(x, center_y - galley_size.y / 2.0);
+                                painter.add(TextShape::new(pos, galley, text_color));
                             }
                             HPlacement::Right => {
                                 let x = self.rect.min.x + SIDE_MARGIN;
@@ -466,46 +409,94 @@ impl<'a> AxisWidget<'a> {
         thickness
     }
 }
-fn estimate_step_hint_data_units(transform: &PlotTransform) -> f64 {
-    let desired_px_spacing: f32 = 80.0;
 
-    let units_per_px = transform.dvalue_dpos()[0] as f32;
-    (units_per_px.abs() * desired_px_spacing) as f64
-}
 #[derive(Clone, Copy, Debug)]
 struct ScreenTick {
-    world_x: f64,
-    screen_x: f32,
-    is_segment_edge: bool,
+    pub world_x: f64,
+    pub screen_x: f32,
+    pub step_size: f64,
+    pub is_segment_edge: bool,
 }
 
-fn compute_segmented_x_ticks(
+fn build_segmented_ticks_from_steps(
     tf: &PlotTransform,
     bx: &crate::SegmentedAxis,
-    step_hint: f64,
+    steps: &[GridMark],
 ) -> Vec<ScreenTick> {
-    let per_seg_ticks = bx.segment_ticks(step_hint);
+    if steps.is_empty() || bx.segments.is_empty() {
+        return Vec::new();
+    }
 
+    const EDGE_EPS: f64 = 1e-9;
     let mut out = Vec::new();
 
-    for (seg_idx, ticks_for_seg) in per_seg_ticks.iter().enumerate() {
-        let seg = &bx.segments[seg_idx];
+    for step in steps {
+        let x = step.value;
+        if !x.is_finite() {
+            continue;
+        }
 
-        for &world_x in ticks_for_seg {
-            if !world_x.is_finite() {
+        let mut inside = false;
+        let mut is_edge = false;
+
+        for seg in &bx.segments {
+            if !(seg.start.is_finite() && seg.end.is_finite()) {
                 continue;
             }
 
-            let screen_x = tf.position_from_point_x(world_x);
+            if x < seg.start || x > seg.end {
+                continue;
+            }
 
+            inside = true;
+
+            if (x - seg.start).abs() <= EDGE_EPS || (x - seg.end).abs() <= EDGE_EPS {
+                is_edge = true;
+            }
+
+            break;
+        }
+
+        if !inside {
+            continue;
+        }
+
+        let screen_x = tf.position_from_point_x(x);
+        if !screen_x.is_finite() {
+            continue;
+        }
+
+        out.push(ScreenTick {
+            world_x: x,
+            screen_x,
+            step_size: step.step_size,
+            is_segment_edge: is_edge,
+        });
+    }
+
+    let default_step = steps.first().map(|s| s.step_size).unwrap_or(1.0);
+
+    for seg in &bx.segments {
+        for &edge_x in &[seg.start, seg.end] {
+            if !edge_x.is_finite() {
+                continue;
+            }
+
+            let exists = out.iter().any(|t| (t.world_x - edge_x).abs() <= EDGE_EPS);
+            if exists {
+                continue;
+            }
+
+            let screen_x = tf.position_from_point_x(edge_x);
             if !screen_x.is_finite() {
                 continue;
             }
 
             out.push(ScreenTick {
-                world_x,
+                world_x: edge_x,
                 screen_x,
-                is_segment_edge: (world_x == seg.start) || (world_x == seg.end),
+                step_size: default_step,
+                is_segment_edge: true,
             });
         }
     }
@@ -518,52 +509,36 @@ fn compute_segmented_x_ticks(
 
     out
 }
-#[derive(Clone)]
-struct TickCluster {
-    pub screen_x: f32,
-    pub ticks: Vec<ScreenTick>,
-    pub has_edge: bool,
-}
 
-fn cluster_overlapping_ticks(
-    mut ticks: Vec<ScreenTick>,
-    px_merge_threshold: f32,
-) -> Vec<TickCluster> {
-    ticks.sort_by(|a, b| {
-        a.screen_x
-            .partial_cmp(&b.screen_x)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+fn cluster_ticks_for_labels(ticks: Vec<ScreenTick>, min_spacing_points: f32) -> Vec<ScreenTick> {
+    if ticks.is_empty() {
+        return ticks;
+    }
 
-    let mut clusters: Vec<TickCluster> = Vec::new();
+    let mut out = Vec::new();
     let mut i = 0;
 
     while i < ticks.len() {
-        let base_x = ticks[i].screen_x;
-
-        let mut group: Vec<ScreenTick> = vec![ticks[i]];
+        let cluster_start_x = ticks[i].screen_x;
+        let mut best = ticks[i];
         i += 1;
 
-        while i < ticks.len() && (ticks[i].screen_x - base_x).abs() < px_merge_threshold {
-            group.push(ticks[i]);
+        while i < ticks.len() && (ticks[i].screen_x - cluster_start_x).abs() < min_spacing_points {
+            let t = ticks[i];
+
+            if (t.is_segment_edge && !best.is_segment_edge)
+                || (t.is_segment_edge == best.is_segment_edge
+                    && (t.screen_x - cluster_start_x).abs()
+                        < (best.screen_x - cluster_start_x).abs())
+            {
+                best = t;
+            }
+
             i += 1;
         }
 
-        let has_edge = group.iter().any(|t| t.is_segment_edge);
-
-        clusters.push(TickCluster {
-            screen_x: base_x,
-            ticks: group,
-            has_edge,
-        });
+        out.push(best);
     }
 
-    clusters
-}
-
-#[derive(Clone, Copy, Debug)]
-enum TickSide {
-    Left,
-    Right,
-    Center,
+    out
 }
