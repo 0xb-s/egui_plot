@@ -1,0 +1,12 @@
+[package]
+name = "navigation"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+eframe = { workspace = true, features = ["default"] }
+egui_plot.workspace = true
+[lints]
+workspace = true
