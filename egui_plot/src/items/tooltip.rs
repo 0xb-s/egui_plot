@@ -40,8 +40,7 @@
 //! - Series highlighting currently matches by **series name**. Prefer unique names.
 
 use egui::{
-    self, Align2, Area, Color32, Frame, Grid, Id, Key, Order, Pos2, Rect, RichText, Stroke,
-    TextStyle,
+    self, Align2, Area, Color32, Frame, Grid, Id, Order, Pos2, Rect, RichText, Stroke, TextStyle,
 };
 
 use crate::{PlotPoint, PlotUi, items::PlotGeometry};
@@ -193,6 +192,7 @@ impl PlotUi<'_> {
         let transform = self.transform().clone();
         let frame = transform.frame();
 
+        let nav = *self.navigation_config();
         // Draw existing pins (rails + markers) on a foreground layer:
         let mut pins = load_pins(&ctx, self.response.id);
         draw_pins_overlay(
@@ -391,13 +391,17 @@ impl PlotUi<'_> {
         }
 
         if hits.is_empty() {
-            if self.response.hovered() {
+            if self.response.hovered() && nav.pinning_enabled {
                 ctx.input(|i| {
-                    if i.key_pressed(Key::U) {
-                        pins.pop();
+                    if let Some(k) = nav.pin_remove_key {
+                        if i.key_pressed(k) {
+                            pins.pop();
+                        }
                     }
-                    if i.key_pressed(Key::Delete) {
-                        pins.clear();
+                    if let Some(k) = nav.pins_clear_key {
+                        if i.key_pressed(k) {
+                            pins.clear();
+                        }
                     }
                 });
                 save_pins(&ctx, self.response.id, pins);
@@ -422,20 +426,26 @@ impl PlotUi<'_> {
             }
         }
 
-        if self.response.hovered() {
+        if self.response.hovered() && nav.pinning_enabled {
             ctx.input(|i| {
-                if i.key_pressed(Key::P) {
-                    let pointer_plot = transform.value_from_position(pointer_screen);
-                    pins.push(PinnedPoints {
-                        hits: hits.clone(),
-                        plot_x: pointer_plot.x,
-                    });
+                if let Some(k) = nav.pin_add_key {
+                    if i.key_pressed(k) {
+                        let pointer_plot = transform.value_from_position(pointer_screen);
+                        pins.push(PinnedPoints {
+                            hits: hits.clone(),
+                            plot_x: pointer_plot.x,
+                        });
+                    }
                 }
-                if i.key_pressed(Key::U) {
-                    pins.pop();
+                if let Some(k) = nav.pin_remove_key {
+                    if i.key_pressed(k) {
+                        pins.pop();
+                    }
                 }
-                if i.key_pressed(Key::Delete) {
-                    pins.clear();
+                if let Some(k) = nav.pins_clear_key {
+                    if i.key_pressed(k) {
+                        pins.clear();
+                    }
                 }
             });
             save_pins(&ctx, self.response.id, pins.clone());

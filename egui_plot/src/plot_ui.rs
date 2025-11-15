@@ -2,7 +2,9 @@ use std::ops::RangeInclusive;
 
 use egui::{Color32, Pos2, Response, Vec2, Vec2b, epaint::Hsva};
 
-use crate::{PlotBounds, PlotItem, PlotPoint, PlotTransform, action::ActionQueue};
+use crate::{
+    NavigationConfig, PlotBounds, PlotItem, PlotPoint, PlotTransform, action::ActionQueue,
+};
 
 #[allow(unused_imports)] // for links in docstrings
 use crate::Plot;
@@ -17,9 +19,14 @@ pub struct PlotUi<'a> {
     pub(crate) last_auto_bounds: Vec2b,
     pub(crate) response: Response,
     pub(crate) called_once: bool,
+    pub(crate) navigation: NavigationConfig,
 }
 
 impl<'a> PlotUi<'a> {
+    #[inline]
+    pub fn navigation_config(&self) -> &NavigationConfig {
+        &self.navigation
+    }
     #[inline]
     pub fn set_segmented_x_axis(&mut self, segment: Option<crate::SegmentedAxis>) {
         self.last_plot_transform.set_segment_xaxis(segment);
