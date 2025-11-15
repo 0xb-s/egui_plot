@@ -32,6 +32,9 @@ pub struct PlotMemory {
     /// in order to fit the labels, if necessary.
     pub(crate) x_axis_thickness: BTreeMap<usize, f32>,
     pub(crate) y_axis_thickness: BTreeMap<usize, f32>,
+
+    ///  first bounds that has been shown.
+    pub original_bounds: Option<crate::transform::PlotBounds>,
 }
 
 impl PlotMemory {
