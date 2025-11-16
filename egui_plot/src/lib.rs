@@ -984,10 +984,6 @@ impl<'a> Plot<'a> {
             y_axis_thickness: Default::default(),
             original_bounds: None,
         });
-        // Remember the very first bounds shown to the user (for ResetBehavior::OriginalBounds)
-        if mem.original_bounds.is_none() {
-            mem.original_bounds = Some(*mem.transform.bounds());
-        }
 
         let last_plot_transform = mem.transform.clone();
         // Call the plot build function.
@@ -1689,6 +1685,9 @@ impl<'a> Plot<'a> {
 
         let old_bounds = *last_plot_transform.bounds();
         let new_bounds = *mem.transform.bounds();
+        if mem.original_bounds.is_none() {
+            mem.original_bounds = Some(new_bounds);
+        }
         if old_bounds != new_bounds {
             events.push(PlotEvent::BoundsChanged {
                 old: old_bounds,
