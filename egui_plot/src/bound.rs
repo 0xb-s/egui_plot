@@ -15,7 +15,6 @@ impl Interval {
         let start_inf = self.start.is_infinite();
         let end_inf = self.end.is_infinite();
 
-     
         if start_inf && end_inf {
             // (-∞, +∞)
             if self.start.is_sign_negative() && self.end.is_sign_positive() {
@@ -26,12 +25,10 @@ impl Interval {
             return 0.0;
         }
 
-     
         if start_inf || end_inf {
             return f64::INFINITY;
         }
 
-      
         (self.end - self.start).max(0.0)
     }
 
