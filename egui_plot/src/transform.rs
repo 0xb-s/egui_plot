@@ -660,7 +660,7 @@ impl PlotTransform {
             let total_len: f64 = bx
                 .segments
                 .iter()
-                .map(|seg| seg.len().max(f64::EPSILON)) 
+                .map(|seg| seg.len().max(f64::EPSILON))
                 .sum();
 
             let total_gap_px: f32 = if n >= 2 {
