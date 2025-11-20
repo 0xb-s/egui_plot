@@ -1102,36 +1102,22 @@ impl<'a> Plot<'a> {
             });
         }
 
-        // Double-click reset (configurable  rn)
+        // Double-click reset to original bounds (if configured).
         if nav.double_click_reset && response.double_clicked() {
-            match nav.reset_behavior {
-                ResetBehavior::AutoFit => {
-                    mem.auto_bounds = true.into();
-                    events.push(PlotEvent::ResetApplied {
-                        input: InputInfo {
-                            pointer: ui.input(|i| i.pointer.hover_pos()),
-                            button: Some(PointerButton::Primary),
-                            modifiers: ui.input(|i| i.modifiers),
-                        },
-                    });
-                    last_user_cause = Some(BoundsChangeCause::Reset);
-                }
-                ResetBehavior::OriginalBounds => {
-                    if let Some(orig) = mem.original_bounds {
-                        bounds = orig;
+            if let Some(orig) = mem.original_bounds {
+                bounds = orig;
 
-                        mem.auto_bounds = false.into();
+                // Once the user explicitly resets, stop auto-bounds.
+                mem.auto_bounds = false.into();
 
-                        events.push(PlotEvent::ResetApplied {
-                            input: InputInfo {
-                                pointer: ui.input(|i| i.pointer.hover_pos()),
-                                button: Some(PointerButton::Primary),
-                                modifiers: ui.input(|i| i.modifiers),
-                            },
-                        });
-                        last_user_cause = Some(BoundsChangeCause::Reset);
-                    }
-                }
+                events.push(PlotEvent::ResetApplied {
+                    input: InputInfo {
+                        pointer: ui.input(|i| i.pointer.hover_pos()),
+                        button: Some(PointerButton::Primary),
+                        modifiers: ui.input(|i| i.modifiers),
+                    },
+                });
+                last_user_cause = Some(BoundsChangeCause::Reset);
             }
         }
 
@@ -1637,17 +1623,6 @@ impl<'a> Plot<'a> {
                 if ui.ctx().input(|i| i.key_pressed(k)) {
                     mem.auto_bounds = true.into();
                     last_user_cause = Some(BoundsChangeCause::AutoFit);
-                }
-            }
-
-            //Restore original bounds shortcut
-            if let Some(k) = nav.restore_original_key {
-                if ui.ctx().input(|i| i.key_pressed(k)) {
-                    if let Some(orig) = mem.original_bounds {
-                        mem.transform.set_bounds(orig);
-                        mem.auto_bounds = false.into();
-                        last_user_cause = Some(BoundsChangeCause::Reset);
-                    }
                 }
             }
 
