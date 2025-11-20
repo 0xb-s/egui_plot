@@ -5,8 +5,6 @@ use egui::{Key, Modifiers, PointerButton, Vec2b};
 /// A reset operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResetBehavior {
-    /// Reset by auto-fitting bounds to visible content.
-    AutoFit,
     /// Restore the original bounds from the first frame the plot was shown.
     OriginalBounds,
 }
@@ -108,8 +106,7 @@ pub struct NavigationConfig {
     pub pinning_enabled: bool,
     /// Shortcut: fit to view (e.g., `Key::F`). `None` disables shortcut.
     pub fit_to_view_key: Option<Key>,
-    /// Shortcut: restore original bounds (e.g., `Key::R`). `None` disables shortcut.
-    pub restore_original_key: Option<Key>,
+
     /// Pin shortcuts.
     pub pin_add_key: Option<Key>,
     pub pin_remove_key: Option<Key>,
@@ -126,11 +123,11 @@ impl Default for NavigationConfig {
                 .zoom_to_mouse(true)
                 .wheel_factor_exp(1.0),
             box_zoom: BoxZoomConfig::new(false, PointerButton::Secondary, Modifiers::NONE),
-            reset_behavior: ResetBehavior::AutoFit,
+            reset_behavior: ResetBehavior::OriginalBounds,
             double_click_reset: true,
             pinning_enabled: true,
             fit_to_view_key: Some(Key::F),
-            restore_original_key: Some(Key::R),
+
             pin_add_key: Some(Key::P),
             pin_remove_key: Some(Key::U),
             pins_clear_key: Some(Key::Delete),
@@ -139,7 +136,7 @@ impl Default for NavigationConfig {
 }
 impl NavigationConfig {
     #[allow(clippy::fn_params_excessive_bools)]
-    /// Helper used to migrate legacy per-field flags into a `NavigationConfig`.
+    /// Build a `NavigationConfig`.
     pub fn from_legacy_flags(
         allow_drag: Vec2b,
         allow_zoom: Vec2b,
@@ -157,68 +154,130 @@ impl NavigationConfig {
                 .zoom_to_mouse(true)
                 .wheel_factor_exp(1.0),
             box_zoom: BoxZoomConfig::new(allow_boxed_zoom, boxed_zoom_button, Modifiers::NONE),
-            reset_behavior: ResetBehavior::AutoFit,
-            double_click_reset: allow_double_click_reset,
-            ..Default::default()
+
+            ..Self::default().reset_controls(
+                ResetBehavior::OriginalBounds,
+                allow_double_click_reset,
+                Some(Key::R),
+            )
         }
     }
 
-    /// Builders for convenience.
+    /// Configure drag behavior for the given axes.
+    ///
+    /// The `axes` parameter uses `(x, y)` ordering:
+    /// - `Some(Vec2b::new(true, true))`  → drag on both X and Y
+    /// - `Some(Vec2b::new(true, false))` → drag on X only
+    /// - `Some(Vec2b::new(false, true))` → drag on Y only
+    /// - `None`                          → dragging completely disabled
     #[inline]
-    pub fn drag(mut self, axis: Vec2b, enabled: bool) -> Self {
-        self.drag = AxisToggle::new(enabled, axis);
+    pub fn drag(mut self, axes: Option<Vec2b>) -> Self {
+        match axes {
+            Some(axis) => {
+                self.drag = AxisToggle::new(true, axis);
+            }
+            None => {
+                self.drag = AxisToggle::new(false, Vec2b::new(false, false));
+            }
+        }
         self
     }
 
+    /// Configure scrolling/panning with the mouse wheel or touchpad.
+    ///
+    /// Same `(x, y)` ordering as `drag`:
+    /// - `Some(Vec2b::new(true, false))` → scroll horizontally only
+    /// - `None`                          → disable scroll-based navigation
     #[inline]
-    pub fn scroll(mut self, axis: Vec2b, enabled: bool) -> Self {
-        self.scroll = AxisToggle::new(enabled, axis);
+    pub fn scroll(mut self, axes: Option<Vec2b>) -> Self {
+        match axes {
+            Some(axis) => {
+                self.scroll = AxisToggle::new(true, axis);
+            }
+            None => {
+                self.scroll = AxisToggle::new(false, Vec2b::new(false, false));
+            }
+        }
         self
     }
 
+    /// Configure zoom-drag on the axis strips.
+    ///
+    /// `axis` selects which axes can be zoomed by dragging on their axis strips.
     #[inline]
-    pub fn axis_zoom_drag(mut self, axis: Vec2b) -> Self {
+    pub fn axis_zoom(mut self, axis: Vec2b) -> Self {
         self.axis_zoom_drag = axis;
         self
     }
 
+    /// Set the full zoom configuration.
     #[inline]
-    pub fn zoom(mut self, cfg: ZoomConfig) -> Self {
+    pub fn scroll_zoom(mut self, cfg: ZoomConfig) -> Self {
         self.zoom = cfg;
         self
     }
 
+    /// Set the box-zoom configuration.
     #[inline]
     pub fn box_zoom(mut self, cfg: BoxZoomConfig) -> Self {
         self.box_zoom = cfg;
         self
     }
 
+    /// Configure all reset-related controls in a single place.
+    ///
+    /// `behavior` defines how reset behaves, `double_click` toggles double-click
+    /// reset, and `fit_key` / `restore_key` configure keyboard shortcuts.
     #[inline]
-    pub fn reset_behavior(mut self, behavior: ResetBehavior) -> Self {
+    pub fn reset_controls(
+        mut self,
+        behavior: ResetBehavior,
+        double_click: bool,
+        fit_key: Option<Key>,
+    ) -> Self {
         self.reset_behavior = behavior;
+        self.double_click_reset = double_click;
+        self.fit_to_view_key = fit_key;
+
         self
     }
 
+    /// Set the reset behavior
+    ///
+    /// This keeps other reset-related fields (double click, shortcuts) unchanged.
     #[inline]
-    pub fn double_click_reset(mut self, on: bool) -> Self {
-        self.double_click_reset = on;
-        self
+    pub fn reset_behavior(self, behavior: ResetBehavior) -> Self {
+        self.reset_controls(behavior, self.double_click_reset, self.fit_to_view_key)
     }
 
+    /// Enable or disable double-click reset.
+    ///
+    /// This keeps the reset behavior and shortcuts unchanged.
+    #[inline]
+    pub fn double_click_reset(self, on: bool) -> Self {
+        self.reset_controls(self.reset_behavior, on, self.fit_to_view_key)
+    }
+
+    /// Configure keyboard shortcuts for "fit to view" and "restore original".
+    ///
+    /// Pass `None` to disable a shortcut.
+    #[inline]
+    pub fn shortcuts_fit_restore(self, fit: Option<Key>) -> Self {
+        self.reset_controls(self.reset_behavior, self.double_click_reset, fit)
+    }
+
+    /// Enable or disable pinning (tooltip pin add/remove/clear).
+    ///
+    /// This affects keyboard shortcuts for pins and any pin-related UI.
     #[inline]
     pub fn pinning(mut self, on: bool) -> Self {
         self.pinning_enabled = on;
         self
     }
 
-    #[inline]
-    pub fn shortcuts_fit_restore(mut self, fit: Option<Key>, restore: Option<Key>) -> Self {
-        self.fit_to_view_key = fit;
-        self.restore_original_key = restore;
-        self
-    }
-
+    /// Configure keyboard shortcuts for pin management.
+    ///
+    /// `add`, `remove`, and `clear` control pin creation and deletion.
     #[inline]
     pub fn shortcuts_pin(
         mut self,
