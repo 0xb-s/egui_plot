@@ -40,10 +40,10 @@ impl App for Demo {
             ui.heading("Line::new_xy + completely custom navigation");
 
             let nav = NavigationConfig::default()
-                .drag(Vec2b::new(true, false), true)
-                .scroll(Vec2b::new(true, false), true)
-                .axis_zoom_drag(Vec2b::new(true, false))
-                .zoom(
+                .drag(Some(Vec2b::new(true, false)))
+                .scroll(Some(Vec2b::new(true, false)))
+                .axis_zoom(Vec2b::new(true, false))
+                .scroll_zoom(
                     ZoomConfig::new(true, Vec2b::new(true, true))
                         .zoom_to_mouse(true)
                         .wheel_factor_exp(1.15),
@@ -58,7 +58,7 @@ impl App for Demo {
                 ))
                 .reset_behavior(ResetBehavior::OriginalBounds)
                 .double_click_reset(true)
-                .shortcuts_fit_restore(Some(Key::F), Some(Key::R))
+                .shortcuts_fit_restore(Some(Key::R))
                 .shortcuts_pin(Some(Key::D), Some(Key::U), Some(Key::Delete));
 
             Plot::new("demo_plot").navigation(nav).show(ui, |plot_ui| {
